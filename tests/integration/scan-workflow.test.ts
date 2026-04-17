@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
-import { SecurityService, SemgrepScanner, VibeCodeScanner, applyFixes, type CodeIssue } from '@backbrain/core';
+import { SecurityService, SemgrepScanner, VibeCodeScanner, applyFixes, runSecurityScan } from '@backbrain/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -17,16 +17,17 @@ describe('Scan Workflow Integration', () => {
         // Create vulnerable file
         fs.writeFileSync(testFile, `
 const password = "hardcoded123";
+fs.readFileSync(secretPath);
 eval(userInput);
         `.trim());
 
         // Scan
         const scanners = [new SemgrepScanner(), new VibeCodeScanner()];
         const service = new SecurityService(scanners);
-        const result = await service.scanFile(testFile);
+        const content = fs.readFileSync(testFile, 'utf-8');
+        const result = await service.scanFile(testFile, content);
 
-        expect(result.isOk()).toBe(true);
-        const issues = result.unwrap();
+        const issues = result.issues;
         expect(issues.length).toBeGreaterThan(0);
 
         // Apply fix (if available)
@@ -38,13 +39,19 @@ eval(userInput);
     });
 
     test('filter by severity', async () => {
-        fs.writeFileSync(testFile, 'const x = eval("test");');
+        fs.writeFileSync(testFile, `
+componentWillMount();
+fs.readFileSync(secretPath);
+        `.trim());
 
-        const service = new SecurityService([new SemgrepScanner()]);
-        const result = await service.scanFile(testFile, { minSeverity: 'high' });
+        new SecurityService([new VibeCodeScanner()]);
+        const result = await runSecurityScan([testFile], {
+            scanners: ['vibe-code'],
+            minSeverity: 'high',
+        });
 
-        expect(result.isOk()).toBe(true);
-        const issues = result.unwrap();
+        const issues = result.issues;
+        expect(issues.length).toBeGreaterThan(0);
         issues.forEach(issue => {
             expect(['critical', 'high']).toContain(issue.severity);
         });
