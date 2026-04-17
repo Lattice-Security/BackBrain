@@ -18,6 +18,10 @@ import { clearFixPreview } from './suggestFixCommand';
 
 const logger = createLogger('ApplyFixCommand');
 
+interface ApplyFixCommandOptions {
+    showPostApplyPrompt?: boolean;
+}
+
 function toCodeIssue(
     issue: { ruleId: string; title: string; description: string; severity: string; filePath: string; line: number; column?: number; snippet?: string },
     fix: { description: string; replacement: string; original?: string; autoFixable: boolean }
@@ -52,7 +56,7 @@ function toCodeIssue(
 export function registerApplyFixCommand(_context: vscode.ExtensionContext): vscode.Disposable {
     return vscode.commands.registerCommand(
         'backbrain.applyFix',
-        async (issueData?: unknown, fixData?: unknown) => {
+        async (issueData?: unknown, fixData?: unknown, options?: ApplyFixCommandOptions) => {
             // Validate inputs
             if (!issueData || typeof issueData !== 'object' || !fixData || typeof fixData !== 'object') {
                 vscode.window.showWarningMessage('Invalid fix data provided.');
@@ -116,6 +120,10 @@ export function registerApplyFixCommand(_context: vscode.ExtensionContext): vsco
             );
 
             if (!result || result.summary.fixed <= 0) {
+                return;
+            }
+
+            if (options?.showPostApplyPrompt === false) {
                 return;
             }
 
