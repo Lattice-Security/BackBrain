@@ -7,30 +7,31 @@
 
 import * as vscode from 'vscode';
 import {
+    applyFixes,
     createLogger,
     formatSummary,
     type CodeIssue,
     type CodeFix,
-    type FixSummary,
 } from '@backbrain/core';
 import { getFixHistoryService } from '../services/fix-history-service';
-import { clearFixPreview, getFixPreview } from './suggestFixCommand';
+import { clearFixPreview } from './suggestFixCommand';
 
 const logger = createLogger('ApplyFixCommand');
 
-function buildSingleFixSummary(
+function toCodeIssue(
     issue: { ruleId: string; title: string; description: string; severity: string; filePath: string; line: number; column?: number; snippet?: string },
     fix: { description: string; replacement: string; original?: string; autoFixable: boolean }
-): FixSummary {
+): CodeIssue {
     const codeFix: CodeFix = {
         description: fix.description,
         replacement: fix.replacement,
-        original: fix.original,
+        original: fix.original ?? issue.snippet,
         autoFixable: fix.autoFixable,
     };
 
-    const codeIssue: CodeIssue = {
+    return {
         id: `${issue.ruleId}-${issue.filePath}-${issue.line}`,
+        ruleId: issue.ruleId,
         title: issue.title,
         description: issue.description,
         severity: issue.severity as 'critical' | 'high' | 'medium' | 'low' | 'info',
@@ -41,18 +42,7 @@ function buildSingleFixSummary(
         },
         suggestedFix: codeFix,
         type: 'security_vulnerability',
-        category: 'logic',
-    };
-
-    return {
-        totalIssues: 1,
-        fixed: 1,
-        skipped: 0,
-        failed: 0,
-        fixes: [{
-            issue: codeIssue,
-            applied: true,
-        }],
+        category: 'security',
     };
 }
 
@@ -90,42 +80,22 @@ export function registerApplyFixCommand(_context: vscode.ExtensionContext): vsco
                     progress.report({ message: 'Applying fix...' });
 
                     try {
-                        const preview = getFixPreview(issue.filePath);
-                        if (!preview) {
-                            throw new Error('No fix preview available. Generate the fix preview before applying.');
-                        }
-
-                        const previewDocument = await vscode.workspace.openTextDocument(preview.previewUri);
                         const targetUri = vscode.Uri.file(issue.filePath);
-                        const targetDocumentBeforeEdit = await vscode.workspace.openTextDocument(targetUri);
-                        const edit = new vscode.WorkspaceEdit();
-                        const fullRange = new vscode.Range(
-                            0,
-                            0,
-                            Math.max(0, targetDocumentBeforeEdit.lineCount - 1),
-                            targetDocumentBeforeEdit.lineCount > 0 ? targetDocumentBeforeEdit.lineAt(targetDocumentBeforeEdit.lineCount - 1).text.length : 0,
-                        );
-
-                        edit.replace(targetUri, fullRange, previewDocument.getText());
-                        const applied = await vscode.workspace.applyEdit(edit);
-                        if (!applied) {
-                            throw new Error('VS Code failed to apply the fix to the file.');
-                        }
-
-                        const document = await vscode.workspace.openTextDocument(targetUri);
-                        await document.save();
-
-                        const summary = buildSingleFixSummary(issue, fix);
-                        const sessionId = `session-${Date.now()}`;
+                        const codeIssue = toCodeIssue(issue, fix);
+                        const { summary, sessionId } = await applyFixes([codeIssue], {
+                            safeOnly: false,
+                            dryRun: false,
+                        });
 
                         if (summary.fixed > 0) {
                             await clearFixPreview(issue.filePath);
+
+                            const document = await vscode.workspace.openTextDocument(targetUri);
                             await vscode.window.showTextDocument(document, {
                                 preview: false,
                                 preserveFocus: false,
                             });
 
-                            // Record in history for revert
                             const historyService = getFixHistoryService();
                             await historyService.recordSession(sessionId, summary, [issue.filePath]);
                         } else if (summary.failed > 0) {
