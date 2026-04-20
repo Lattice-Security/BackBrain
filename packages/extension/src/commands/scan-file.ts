@@ -16,6 +16,8 @@ interface ScanFileOptions {
   quiet?: boolean;
 }
 
+const inFlightFileScans = new Map<string, Promise<void>>();
+
 export async function scanFileCommand(ctx: CommandContext, uri?: vscode.Uri, options: ScanFileOptions = {}) {
   // Use provided URI (explorer context) or fallback to active editor
   const targetUri = uri || vscode.window.activeTextEditor?.document.uri;
@@ -32,6 +34,13 @@ export async function scanFileCommand(ctx: CommandContext, uri?: vscode.Uri, opt
 
   const filePath = targetUri.fsPath;
   logger.info('Scanning file', { filePath });
+
+  const existingScan = inFlightFileScans.get(filePath);
+  if (existingScan) {
+    logger.info('Scan already in progress for file, reusing existing run', { filePath });
+    await existingScan;
+    return;
+  }
 
   try {
     const runScan = async () => {
@@ -54,17 +63,24 @@ export async function scanFileCommand(ctx: CommandContext, uri?: vscode.Uri, opt
       logger.info('Scan complete', { total, critical, high });
     };
 
-    if (options.quiet) {
-      await runScan();
-    } else {
-      await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: "BackBrain: Scanning file...",
-        cancellable: false
-      }, async () => runScan());
-    }
+    const scanPromise = (async () => {
+      if (options.quiet) {
+        await runScan();
+      } else {
+        await vscode.window.withProgress({
+          location: vscode.ProgressLocation.Notification,
+          title: "BackBrain: Scanning file...",
+          cancellable: false
+        }, async () => runScan());
+      }
+    })();
+
+    inFlightFileScans.set(filePath, scanPromise);
+    await scanPromise;
   } catch (error) {
     logger.error('Scan failed', { error });
     vscode.window.showErrorMessage(`BackBrain: Scan failed: ${error}`);
+  } finally {
+    inFlightFileScans.delete(filePath);
   }
 }
