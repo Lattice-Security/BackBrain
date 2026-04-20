@@ -206,6 +206,181 @@ describe('CliAgentReviewScanner', () => {
         expect(available).toBe(false);
     });
 
+    it('should run planner, specialist, and aggregator using the Gemini backend output envelope', async () => {
+        const calls: string[] = [];
+        let geminiCallCount = 0;
+
+        const execMock = (cmd: string, options: any, callback: any) => {
+            if (typeof options === 'function') {
+                callback = options;
+            }
+
+            calls.push(cmd);
+
+            if (cmd === 'gemini --version') {
+                callback(null, '1.2.3', '');
+                return { on: () => { } };
+            }
+
+            if (cmd.includes('gemini --approval-mode plan --output-format json -p')) {
+                geminiCallCount += 1;
+
+                if (geminiCallCount === 1) {
+                    callback(null, JSON.stringify({
+                        session_id: 'session-ready',
+                        response: '{"ready":true}',
+                    }), '');
+                    return { on: () => { } };
+                }
+
+                if (geminiCallCount === 2) {
+                    callback(null, JSON.stringify({
+                        session_id: 'session-plan',
+                        response: JSON.stringify({
+                            repoSummary: 'Express service with risky command execution',
+                            specialists: [
+                                {
+                                    name: 'command-injection-reviewer',
+                                    rationale: 'Shell execution is present',
+                                    focus: 'Review command execution and path handling',
+                                    paths: ['/repo/server.js'],
+                                    checks: ['check shell command construction'],
+                                    relevantFindingIds: ['semgrep.exec'],
+                                },
+                            ],
+                        }),
+                    }), '');
+                    return { on: () => { } };
+                }
+
+                if (geminiCallCount === 3) {
+                    callback(null, JSON.stringify({
+                        session_id: 'session-specialist',
+                        response: JSON.stringify({
+                            findings: [
+                                {
+                                    title: 'Unsanitized shell command',
+                                    description: 'User input reaches execSync without validation.',
+                                    severity: 'high',
+                                    confidence: 'high',
+                                    filePath: '/repo/server.js',
+                                    line: 8,
+                                    evidence: 'execSync interpolates req.query.host directly.',
+                                    remediation: 'Avoid shell execution or validate against an allowlist.',
+                                },
+                            ],
+                        }),
+                    }), '');
+                    return { on: () => { } };
+                }
+
+                callback(null, JSON.stringify({
+                    session_id: 'session-aggregate',
+                    response: JSON.stringify({
+                        findings: [
+                            {
+                                title: 'Unsanitized shell command',
+                                description: 'User input reaches execSync without validation.',
+                                severity: 'high',
+                                confidence: 'high',
+                                filePath: '/repo/server.js',
+                                line: 8,
+                                evidence: 'execSync interpolates req.query.host directly.',
+                                remediation: 'Avoid shell execution or validate against an allowlist.',
+                                sourceRoles: ['command-injection-reviewer'],
+                            },
+                        ],
+                    }),
+                }), '');
+                return { on: () => { } };
+            }
+
+            callback(new Error(`Unexpected command: ${cmd}`), '', '');
+            return { on: () => { } };
+        };
+
+        (execMock as any)[promisify.custom] = (cmd: string, options?: any) => new Promise((resolve, reject) => {
+            execMock(cmd, options, (error: Error | null, stdout: string, stderr: string) => {
+                if (error) {
+                    reject(error);
+                    return;
+                }
+                resolve({ stdout, stderr });
+            });
+        });
+
+        const scanner = new CliAgentReviewScanner({
+            execFn: execMock as any,
+            backends: {
+                codex: { enabled: false },
+                gemini: { enabled: true, binaryPath: 'gemini' },
+                opencode: { enabled: false },
+            },
+        });
+
+        const result = await scanner.scanWithContext(['/repo/server.js'], {
+            repositoryRoot: '/repo',
+            deterministicIssues: [
+                {
+                    ruleId: 'semgrep.exec',
+                    title: 'Exec issue',
+                    description: 'Potential shell execution risk',
+                    severity: 'high',
+                    filePath: '/repo/server.js',
+                    line: 8,
+                },
+            ],
+            changedFiles: ['server.js'],
+        });
+
+        expect(result.issues).toHaveLength(1);
+        expect(result.issues[0]?.ruleId).toBe('agent-review.unsanitized-shell-command');
+        expect(result.issues[0]?.confidence).toBe('high');
+        expect(calls.filter(cmd => cmd.includes('gemini --approval-mode plan --output-format json -p')).length).toBe(4);
+    });
+
+    it('should classify Gemini CLI argument mismatches with a specific hint', async () => {
+        const execMock = (cmd: string, options: any, callback: any) => {
+            if (typeof options === 'function') {
+                callback = options;
+            }
+
+            if (cmd === 'gemini --version') {
+                callback(null, '1.2.3', '');
+                return { on: () => { } };
+            }
+
+            callback(
+                new Error('Invalid values:\n  Argument: approval-mode, Given: "plan", Choices: "default", "auto_edit", "yolo"\nUsage: gemini [options] [command]'),
+                '',
+                'Invalid values:\n  Argument: approval-mode, Given: "plan", Choices: "default", "auto_edit", "yolo"\nUsage: gemini [options] [command]'
+            );
+            return { on: () => { } };
+        };
+
+        (execMock as any)[promisify.custom] = (cmd: string, options?: any) => new Promise((resolve, reject) => {
+            execMock(cmd, options, (error: Error | null, stdout: string, stderr: string) => {
+                if (error) {
+                    reject(error);
+                    return;
+                }
+                resolve({ stdout, stderr });
+            });
+        });
+
+        const scanner = new CliAgentReviewScanner({
+            execFn: execMock as any,
+            backends: {
+                codex: { enabled: false },
+                gemini: { enabled: true, binaryPath: 'gemini' },
+                opencode: { enabled: false },
+            },
+        });
+
+        const available = await scanner.isAvailable();
+        expect(available).toBe(false);
+    });
+
     it('should scope planner input to changed files when configured', async () => {
         const { execMock, calls } = createExecMock();
         const scanner = new CliAgentReviewScanner({

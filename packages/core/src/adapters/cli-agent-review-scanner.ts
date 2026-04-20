@@ -412,7 +412,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         backend: { id: AgentBackendId; config: AgentBackendConfig },
         cwd: string,
     ): Promise<string> {
-        const command = `${backend.config.binaryPath} --approval-mode plan --output-format json --prompt ${JSON.stringify('Return ONLY this exact JSON: {"ready":true}')}`;
+        const command = `${backend.config.binaryPath} --approval-mode plan --output-format json -p ${JSON.stringify('Return ONLY this exact JSON: {"ready":true}')}`;
 
         try {
             const { stdout } = await this.execAsync(command, {
@@ -421,7 +421,10 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 env: this.buildExecEnv(backend.id),
                 timeout: 15000,
             });
-            return stdout;
+            return this.normalizeBackendOutput(backend.id, stdout, {
+                isReadinessProbe: true,
+                expectsJsonObject: true,
+            });
         } catch (error) {
             throw error;
         }
@@ -467,7 +470,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 return `${backend.config.binaryPath} exec --sandbox read-only --skip-git-repo-check${modelFlag} ${quotedPrompt}`;
             }
             case 'gemini':
-                return `${backend.config.binaryPath} --approval-mode plan --output-format json --prompt ${quotedPrompt}`;
+                return `${backend.config.binaryPath} --approval-mode plan --output-format json -p ${quotedPrompt}`;
             case 'opencode':
                 return `${backend.config.binaryPath} run --print-logs --format json ${quotedPrompt}`;
         }
@@ -501,6 +504,20 @@ export class CliAgentReviewScanner implements SecurityScanner {
             const jsonMatch = trimmed.match(/\{[\s\S]*\}$/);
             if (jsonMatch) {
                 return jsonMatch[0];
+            }
+        }
+
+        if (backend === 'gemini') {
+            try {
+                const envelope = JSON.parse(trimmed) as { response?: unknown };
+                if (typeof envelope.response === 'string') {
+                    return envelope.response.trim();
+                }
+                if (envelope.response && typeof envelope.response === 'object') {
+                    return JSON.stringify(envelope.response);
+                }
+            } catch {
+                // Fall through and let extractJson handle raw output.
             }
         }
 
@@ -548,7 +565,15 @@ export class CliAgentReviewScanner implements SecurityScanner {
         const text = [error.message, error.stderr, error.stdout].filter(Boolean).join('\n');
         const normalized = text.toLowerCase();
 
-        if (normalized.includes('authentication page') || normalized.includes('api key expired') || normalized.includes('api_key_invalid') || normalized.includes('insufficient credits')) {
+        if (
+            normalized.includes('authentication page') ||
+            normalized.includes('api key expired') ||
+            normalized.includes('api_key_invalid') ||
+            normalized.includes('insufficient credits') ||
+            normalized.includes("you've hit your usage limit") ||
+            normalized.includes('loaded cached credentials') && normalized.includes('login') ||
+            normalized.includes('unauthenticated')
+        ) {
             return {
                 category: 'auth',
                 hint: `${backend} is installed but not authenticated or funded for headless review.`,
@@ -566,6 +591,13 @@ export class CliAgentReviewScanner implements SecurityScanner {
             return {
                 category: 'filesystem',
                 hint: `${backend} could not initialize local runtime state. Check writable cache/data directories.`,
+            };
+        }
+
+        if (normalized.includes('invalid values:') || normalized.includes('choices:') || normalized.includes('usage: gemini')) {
+            return {
+                category: 'unknown',
+                hint: `${backend} CLI arguments are incompatible with the installed CLI version.`,
             };
         }
 
