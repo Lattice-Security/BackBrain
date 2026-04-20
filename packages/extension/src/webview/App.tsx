@@ -28,6 +28,7 @@ const App: React.FC = () => {
     const [issues, setIssues] = useState<IssueData[]>(initialState?.issues || []);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [status, setStatus] = useState<{ level: 'info' | 'warn' | 'error'; message: string } | null>(null);
     const [activeFix, setActiveFix] = useState<{ issueId: string; fix: FixData } | null>(null);
     const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
     const [explanations, setExplanations] = useState<Record<string, ExplanationState>>({});
@@ -66,6 +67,12 @@ const App: React.FC = () => {
                 case 'scanError':
                     setError(message.error);
                     setLoading(false);
+                    break;
+                case 'statusUpdate':
+                    setStatus({ level: message.level, message: message.message });
+                    break;
+                case 'statusClear':
+                    setStatus(null);
                     break;
                 case 'fixSuggested':
                     setActiveFix({ issueId: message.issueId, fix: message.fix });
@@ -286,6 +293,29 @@ const App: React.FC = () => {
                         border: '1px solid var(--bb-color-error)',
                     }}>
                         <strong>Scan Error:</strong> {error}
+                    </div>
+                )}
+
+                {status && (
+                    <div style={{
+                        padding: 'var(--bb-spacing-lg)',
+                        marginBottom: 'var(--bb-spacing-xl)',
+                        borderRadius: 'var(--bb-border-radius-md)',
+                        backgroundColor: status.level === 'error'
+                            ? 'var(--bb-color-error-bg)'
+                            : status.level === 'warn'
+                                ? 'var(--vscode-inputValidation-warningBackground, rgba(191, 144, 0, 0.15))'
+                                : 'var(--bb-color-background-secondary)',
+                        color: status.level === 'error'
+                            ? 'var(--bb-color-error)'
+                            : 'var(--bb-color-foreground)',
+                        border: `1px solid ${status.level === 'error'
+                            ? 'var(--bb-color-error)'
+                            : status.level === 'warn'
+                                ? 'var(--vscode-inputValidation-warningBorder, #cca700)'
+                                : 'var(--bb-color-border)'}`,
+                    }}>
+                        <strong>BackBrain:</strong> {status.message}
                     </div>
                 )}
 

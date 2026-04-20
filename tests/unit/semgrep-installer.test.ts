@@ -120,4 +120,52 @@ describe("SemgrepInstaller", () => {
         expect(executedCommands.some(cmd => cmd.includes("python3 -m venv"))).toBe(false);
         expect(executedCommands.some(cmd => cmd.includes("pip") && cmd.includes("install semgrep"))).toBe(true);
     });
+
+    it("should report incomplete installs when the venv exists without semgrep", () => {
+        mockFs.existsSync.mockImplementation((target: string) => target.includes("semgrep-venv") && !target.includes("/bin/semgrep"));
+
+        expect(installer.hasIncompleteInstall()).toBe(true);
+    });
+
+    it("should emit install progress messages while repairing an incomplete install", async () => {
+        const executedCommands: string[] = [];
+        const progressMessages: string[] = [];
+
+        mockExec.mockImplementation((cmd: string, options: any, callback: any) => {
+            if (typeof options === 'function') {
+                callback = options;
+            }
+            executedCommands.push(cmd);
+            if (cmd.includes('--version')) {
+                callback(null, "Python 3.9.0", "");
+                return;
+            }
+            callback(null, "success", "");
+        });
+
+        mockFs.mkdirSync = mock(() => { });
+        mockFs.rmSync = mock(() => { });
+        mockFs.existsSync.mockImplementation((target: string) => {
+            if (target.includes('/bin/semgrep')) {
+                return true;
+            }
+            if (target.includes('/bin/pip')) {
+                return true;
+            }
+            if (target.includes('semgrep-venv')) {
+                return true;
+            }
+            return false;
+        });
+
+        await installer.install((message) => {
+            progressMessages.push(message);
+        });
+
+        expect(executedCommands.some(cmd => cmd.includes("python3 -m venv"))).toBe(false);
+        expect(executedCommands.some(cmd => cmd.includes("pip") && cmd.includes("install semgrep"))).toBe(true);
+        expect(progressMessages.some(message => message.includes("Upgrading pip"))).toBe(true);
+        expect(progressMessages.some(message => message.includes("Installing Semgrep packages"))).toBe(true);
+        expect(progressMessages.at(-1)).toBe("Semgrep is ready.");
+    });
 });

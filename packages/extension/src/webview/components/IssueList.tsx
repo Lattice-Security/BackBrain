@@ -63,7 +63,7 @@ export const IssueList: React.FC<IssueListProps> = ({ issues, loading, activeFix
         return (
             <div className="issue-list-loading">
                 <vscode-progress-ring />
-                <div className="issue-list-loading-text">Scanning workspace...</div>
+                <div className="issue-list-loading-text">Scanning...</div>
             </div>
         );
     }
@@ -72,11 +72,11 @@ export const IssueList: React.FC<IssueListProps> = ({ issues, loading, activeFix
         return (
             <div className="issue-list-empty">
                 <div className="issue-list-empty-title">
-                    All Clear
+                    Ready To Scan
                 </div>
-                <div>No issues found</div>
+                <div>No issues loaded yet</div>
                 <div className="issue-list-empty-subtitle">
-                    Your code looks clean.
+                    Run a file or workspace scan to populate results.
                 </div>
             </div>
         );

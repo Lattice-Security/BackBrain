@@ -65,6 +65,79 @@ async function ensureOptionalScannerToolsInstalled(
   }
 }
 
+async function ensureSemgrepInstalled(
+  installer: SemgrepInstaller,
+  semgrepScanners: SemgrepScanner[],
+  severityPanelProvider: SeverityPanelProvider,
+): Promise<void> {
+  const applySemgrepPath = (binaryPath: string) => {
+    semgrepScanners.forEach(scanner => scanner.setBinaryPath(binaryPath));
+    logger.info('Semgrep found', { path: binaryPath });
+  };
+
+  if (await installer.isAvailable()) {
+    const semgrepPath = installer.getSemgrepPath();
+    applySemgrepPath(semgrepPath);
+    severityPanelProvider.clearStatus();
+    return;
+  }
+
+  const hasIncompleteInstall = installer.hasIncompleteInstall();
+  const installLabel = hasIncompleteInstall ? 'Repair Semgrep' : 'Install Semgrep';
+  const missingMessage = hasIncompleteInstall
+    ? 'Semgrep installation is incomplete. BackBrain is using limited scanners until it is repaired.'
+    : 'Semgrep is not installed. BackBrain is using limited scanners until it is installed.';
+  severityPanelProvider.setStatus('warn', missingMessage);
+
+  const selection = await vscode.window.showWarningMessage(
+    hasIncompleteInstall
+      ? 'BackBrain: Semgrep installation is incomplete. Security scanning is limited until it is repaired.'
+      : 'BackBrain: Semgrep is missing. Security scanning will be limited.',
+    installLabel,
+    'Learn More',
+  );
+
+  if (selection === 'Learn More') {
+    vscode.env.openExternal(vscode.Uri.parse('https://semgrep.dev/docs/getting-started/'));
+    return;
+  }
+
+  if (selection !== installLabel) {
+    return;
+  }
+
+  await vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title: hasIncompleteInstall ? 'Repairing Semgrep...' : 'Installing Semgrep...',
+    cancellable: false,
+  }, async (progress) => {
+    try {
+      await installer.install((message) => {
+        progress.report({ message });
+        severityPanelProvider.setStatus('info', `Semgrep setup in progress: ${message}`);
+      });
+      const semgrepPath = installer.getSemgrepPath();
+      applySemgrepPath(semgrepPath);
+      severityPanelProvider.setStatus('info', 'Semgrep installed successfully. Full security scanning is now available.');
+      vscode.window.showInformationMessage('Semgrep installed successfully!');
+
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor?.document.uri.scheme === 'file') {
+        void vscode.commands.executeCommand('backbrain.scanFile', activeEditor.document.uri, { quiet: true });
+      }
+    } catch (err) {
+      logger.error('Failed to install Semgrep', { error: err });
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      severityPanelProvider.setStatus('error', `Semgrep installation failed: ${errorMsg}`);
+      vscode.window.showErrorMessage(`BackBrain: ${errorMsg}`, 'Manual Install').then(choice => {
+        if (choice === 'Manual Install') {
+          vscode.env.openExternal(vscode.Uri.parse('https://semgrep.dev/docs/getting-started/'));
+        }
+      });
+    }
+  });
+}
+
 export async function activate(context: vscode.ExtensionContext) {
   // 1. Initialize VS Code specific logging immediately
   initVSCodeLogging(context);
@@ -86,44 +159,12 @@ export async function activate(context: vscode.ExtensionContext) {
     initializeFixHistoryService(context);
     registerFixPreviewProvider(context);
 
-    // Check Semgrep availability
+    // Check Semgrep availability without blocking the rest of activation.
     let semgrepPath = '';
     const isSemgrepAvailable = await installer.isAvailable();
-
     if (isSemgrepAvailable) {
       semgrepPath = installer.getSemgrepPath();
       logger.info('Semgrep found', { path: semgrepPath });
-    } else {
-      // Prompt to install
-      const selection = await vscode.window.showWarningMessage(
-        'BackBrain: Semgrep is missing. Security scanning will be limited.',
-        'Install Semgrep',
-        'Learn More'
-      );
-
-      if (selection === 'Install Semgrep') {
-        await vscode.window.withProgress({
-          location: vscode.ProgressLocation.Notification,
-          title: 'Installing Semgrep...',
-          cancellable: false
-        }, async () => {
-          try {
-            await installer.install();
-            semgrepPath = installer.getSemgrepPath();
-            vscode.window.showInformationMessage('Semgrep installed successfully!');
-          } catch (err) {
-            logger.error('Failed to install Semgrep', { error: err });
-            const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-            vscode.window.showErrorMessage(`BackBrain: ${errorMsg}`, 'Manual Install').then(choice => {
-              if (choice === 'Manual Install') {
-                vscode.env.openExternal(vscode.Uri.parse('https://semgrep.dev/docs/getting-started/'));
-              }
-            });
-          }
-        });
-      } else if (selection === 'Learn More') {
-        vscode.env.openExternal(vscode.Uri.parse('https://semgrep.dev/docs/getting-started/'));
-      }
     }
 
     const toolBinaryPaths: Partial<Record<'gitleaks' | 'trivy' | 'osv-scanner', string>> = {};
@@ -162,6 +203,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Register scanners automatically from core
     let registeredScannerCount = 0;
+    const semgrepScanners: SemgrepScanner[] = [];
     let vibeScanner: VibeCodeScanner | undefined;
     const scanners: SecurityScanner[] = DEFAULT_SCANNERS.map(entry => entry.scanner);
 
@@ -194,8 +236,11 @@ export async function activate(context: vscode.ExtensionContext) {
       scanners.forEach((scanner) => {
         try {
           // Configure Semgrep scanner if path is available
-          if (scanner instanceof SemgrepScanner && semgrepPath) {
-            scanner.setBinaryPath(semgrepPath);
+          if (scanner instanceof SemgrepScanner) {
+            semgrepScanners.push(scanner);
+            if (semgrepPath) {
+              scanner.setBinaryPath(semgrepPath);
+            }
           }
 
           if (scanner instanceof GitleaksScanner && toolBinaryPaths['gitleaks']) {
@@ -396,6 +441,9 @@ export async function activate(context: vscode.ExtensionContext) {
     logger.info('BackBrain extension activated successfully');
 
     void optionalToolInstallPromise;
+    if (!isSemgrepAvailable) {
+      void ensureSemgrepInstalled(installer, semgrepScanners, severityPanelProvider);
+    }
   } catch (error) {
     logger.error('Critical failure during BackBrain activation', { error });
 

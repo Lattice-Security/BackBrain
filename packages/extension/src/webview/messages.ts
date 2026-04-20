@@ -58,6 +58,8 @@ export type ExtensionMessage =
     | { type: 'scanStarted' }
     | { type: 'scanComplete'; issues: IssueData[] }
     | { type: 'scanError'; error: string }
+    | { type: 'statusUpdate'; level: 'info' | 'warn' | 'error'; message: string }
+    | { type: 'statusClear' }
     | { type: 'issuesUpdated'; issues: IssueData[]; batchInfo?: { current: number; total: number } }
     | { type: 'explanationStarted'; issueId: string; provider?: string | null }
     | { type: 'explanationChunk'; issueId: string; chunk: string }

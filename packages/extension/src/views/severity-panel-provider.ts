@@ -9,6 +9,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'backbrain.severityPanel';
     private _view?: vscode.WebviewView;
     private _issues: IssueData[] = [];
+    private _statusMessage: { level: 'info' | 'warn' | 'error'; message: string } | null = null;
     private _isScanning = false;
     private _lastScanError: string | null = null;
     private _lastBatchProgress: { current: number; total: number } | null = null;
@@ -48,6 +49,16 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
 
     public getIssues(): IssueData[] {
         return this._issues || [];
+    }
+
+    public setStatus(level: 'info' | 'warn' | 'error', message: string): void {
+        this._statusMessage = { level, message };
+        this._postMessage({ type: 'statusUpdate', level, message });
+    }
+
+    public clearStatus(): void {
+        this._statusMessage = null;
+        this._postMessage({ type: 'statusClear' });
     }
 
     public async startWorkspaceScan(): Promise<void> {
@@ -439,6 +450,9 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     }
 
     private _syncStateToWebview(): void {
+        if (this._statusMessage) {
+            this._postMessage({ type: 'statusUpdate', ...this._statusMessage });
+        }
         if (this._isScanning) {
             this._postMessage({ type: 'scanStarted' });
         }
