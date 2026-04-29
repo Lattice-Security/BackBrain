@@ -1,9 +1,17 @@
 import { exec } from 'child_process';
+import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import * as path from 'path';
 import { z } from 'zod';
 
-import type { ScanResult, SecurityIssue, SecurityScanContext, SecurityScanner, Severity } from '../ports';
+import type {
+    ScanResult,
+    SecurityIssue,
+    SecurityScanContext,
+    SecurityScanStatusUpdate,
+    SecurityScanner,
+    Severity,
+} from '../ports';
 import { createLogger } from '../utils/logger';
 import { toError } from '../utils/result';
 
@@ -81,6 +89,8 @@ const aggregatorSchema = z.object({
         evidence: z.string().min(1),
         remediation: z.string().min(1),
         sourceRoles: z.array(z.string()).default([]),
+        groundedByDeterministicFindings: z.boolean().default(false),
+        linkedDeterministicFindingIds: z.array(z.string()).default([]),
     })),
 });
 
@@ -155,6 +165,12 @@ export class CliAgentReviewScanner implements SecurityScanner {
 
         if (availableBackends.length === 0) {
             logger.warn('Skipping agent review: no CLI backends available');
+            this.reportStatus(context, {
+                phase: 'skipped',
+                level: 'warn',
+                message: 'AI review skipped because no configured CLI backends are ready.',
+                degraded: true,
+            });
             return {
                 issues: [],
                 scannedFiles: paths,
@@ -186,12 +202,36 @@ export class CliAgentReviewScanner implements SecurityScanner {
         });
 
         const leadBackend = availableBackends[0]!;
+        this.reportStatus(context, {
+            phase: 'agent-planner',
+            level: 'info',
+            message: `AI review planner running with ${leadBackend.id}.`,
+            backend: leadBackend.id,
+        });
         logger.info('Running agent review planner', {
             backend: leadBackend.id,
             maxSpecialists: this.maxSpecialists,
         });
-        const plannerRaw = await this.runBackend(leadBackend, plannerPrompt, repositoryRoot);
-        const planner = plannerSchema.parse(this.extractJson(plannerRaw));
+        let planner: PlannerOutput;
+        try {
+            const plannerRaw = await this.runBackend(leadBackend, plannerPrompt, repositoryRoot);
+            planner = plannerSchema.parse(this.extractJson(plannerRaw));
+        } catch (error) {
+            logger.warn('Agent review planner failed; skipping AI review', { error: toError(error) });
+            this.reportStatus(context, {
+                phase: 'degraded',
+                level: 'warn',
+                message: `AI review planner failed on ${leadBackend.id}; deterministic results only.`,
+                backend: leadBackend.id,
+                degraded: true,
+            });
+            return {
+                issues: [],
+                scannedFiles: paths,
+                scanDurationMs: Date.now() - startTime,
+                scannerInfo: `AI Agent Review (${leadBackend.id} planner failed)`,
+            };
+        }
         const specialists = planner.specialists.slice(0, this.maxSpecialists);
         logger.info('Agent review planner completed', {
             backend: leadBackend.id,
@@ -199,26 +239,57 @@ export class CliAgentReviewScanner implements SecurityScanner {
             specialistNames: specialists.map(item => item.name),
         });
 
-        const specialistResults = await Promise.all(
-            await this.runWithConcurrency(
-                specialists,
-                this.specialistConcurrency,
-                (specialist, index) => this.runSpecialist(
-                    specialist,
-                    availableBackends[index % availableBackends.length]!,
-                    {
-                        repositoryRoot,
-                        deterministicIssues,
-                        changedFiles,
-                        repoSummary: planner.repoSummary,
-                    }
-                )
+        if (specialists.length === 0) {
+            this.reportStatus(context, {
+                phase: 'skipped',
+                level: 'info',
+                message: 'AI review planner did not select any specialist reviewers.',
+                backend: leadBackend.id,
+            });
+            return {
+                issues: [],
+                scannedFiles: paths,
+                scanDurationMs: Date.now() - startTime,
+                scannerInfo: `AI Agent Review (${leadBackend.id}, no specialists selected)`,
+            };
+        }
+
+        this.reportStatus(context, {
+            phase: 'agent-specialists',
+            level: 'info',
+            message: `Running ${specialists.length} AI specialist review(s).`,
+            backend: leadBackend.id,
+        });
+        const specialistOutcomes = await this.runWithConcurrency(
+            specialists,
+            this.specialistConcurrency,
+            (specialist, index) => this.runSpecialistSafely(
+                specialist,
+                availableBackends[index % availableBackends.length]!,
+                {
+                    repositoryRoot,
+                    deterministicIssues,
+                    changedFiles,
+                    repoSummary: planner.repoSummary,
+                }
             )
         );
+        const specialistResults = specialistOutcomes
+            .filter((result): result is NonNullable<typeof result> => result !== null);
+        const failedSpecialists = specialistOutcomes.length - specialistResults.length;
         logger.info('Agent review specialists completed', {
             specialistCount: specialistResults.length,
             findingsCount: specialistResults.reduce((count, item) => count + item.findings.length, 0),
         });
+        if (failedSpecialists > 0) {
+            this.reportStatus(context, {
+                phase: 'degraded',
+                level: 'warn',
+                message: `${failedSpecialists} AI specialist review(s) failed; continuing with partial coverage.`,
+                backend: leadBackend.id,
+                degraded: true,
+            });
+        }
 
         const rawAgentFindings = specialistResults.flatMap(result => result.findings.map(finding => ({
             ...finding,
@@ -232,22 +303,85 @@ export class CliAgentReviewScanner implements SecurityScanner {
             rawAgentFindings,
         });
 
+        let aggregatedFindings: AggregatorOutput['findings'];
+        let usedFallbackAggregation = false;
+        this.reportStatus(context, {
+            phase: 'agent-aggregator',
+            level: 'info',
+            message: 'Merging AI specialist findings.',
+            backend: leadBackend.id,
+        });
         logger.info('Running agent review aggregator', {
             backend: leadBackend.id,
             rawFindingCount: rawAgentFindings.length,
         });
-        const aggregatorRaw = await this.runBackend(leadBackend, aggregatorPrompt, repositoryRoot);
-        const aggregated = aggregatorSchema.parse(this.extractJson(aggregatorRaw));
-        logger.info('Agent review aggregation completed', {
+        try {
+            const aggregatorRaw = await this.runBackend(leadBackend, aggregatorPrompt, repositoryRoot);
+            const aggregated = aggregatorSchema.parse(this.extractJson(aggregatorRaw));
+            aggregatedFindings = aggregated.findings;
+            logger.info('Agent review aggregation completed', {
+                backend: leadBackend.id,
+                finalFindingCount: aggregated.findings.length,
+            });
+        } catch (error) {
+            usedFallbackAggregation = true;
+            logger.warn('Agent review aggregator failed; falling back to raw specialist findings', {
+                error: toError(error),
+            });
+            this.reportStatus(context, {
+                phase: 'degraded',
+                level: 'warn',
+                message: 'AI aggregation failed; using verified specialist findings directly.',
+                backend: leadBackend.id,
+                degraded: true,
+            });
+            aggregatedFindings = rawAgentFindings.map((finding) => ({
+                title: finding.title,
+                description: finding.description,
+                severity: finding.severity,
+                confidence: finding.confidence,
+                filePath: finding.filePath,
+                line: finding.line,
+                evidence: finding.evidence,
+                remediation: finding.remediation,
+                sourceRoles: [finding.roleName],
+                groundedByDeterministicFindings: false,
+                linkedDeterministicFindingIds: [],
+            }));
+        }
+
+        this.reportStatus(context, {
+            phase: 'agent-verification',
+            level: 'info',
+            message: 'Verifying AI findings against the current workspace state.',
             backend: leadBackend.id,
-            finalFindingCount: aggregated.findings.length,
         });
+        const verifiedIssues = await this.verifyAgentFindings(
+            aggregatedFindings,
+            repositoryRoot,
+            leadBackend.id,
+            {
+                degraded: usedFallbackAggregation || failedSpecialists > 0,
+                deterministicIssues,
+            }
+        );
+        const verifiedCount = verifiedIssues.filter(issue => issue.verificationStatus === 'verified').length;
+        const downgradedCount = verifiedIssues.filter(issue => issue.verificationStatus === 'unverified').length;
+        if (downgradedCount > 0) {
+            this.reportStatus(context, {
+                phase: 'degraded',
+                level: 'warn',
+                message: `${downgradedCount} AI finding(s) could not be fully verified and were downgraded.`,
+                backend: leadBackend.id,
+                degraded: true,
+            });
+        }
 
         return {
-            issues: aggregated.findings.map((finding) => this.toIssue(finding)),
+            issues: verifiedIssues,
             scannedFiles: paths,
             scanDurationMs: Date.now() - startTime,
-            scannerInfo: `AI Agent Review (${availableBackends.map(b => b.id).join(', ')})`,
+            scannerInfo: `AI Agent Review (${availableBackends.map(b => b.id).join(', ')}, verified: ${verifiedCount}, downgraded: ${downgradedCount})`,
         };
     }
 
@@ -307,6 +441,124 @@ export class CliAgentReviewScanner implements SecurityScanner {
             backend: backend.id,
             findings: parsed.findings,
         };
+    }
+
+    private async runSpecialistSafely(
+        specialist: PlannerOutput['specialists'][number],
+        backend: { id: AgentBackendId; config: AgentBackendConfig },
+        context: {
+            repositoryRoot: string;
+            deterministicIssues: SecurityIssue[];
+            changedFiles: string[];
+            repoSummary: string;
+        }
+    ): Promise<{ roleName: string; backend: string; findings: SpecialistOutput['findings'] } | null> {
+        try {
+            return await this.runSpecialist(specialist, backend, context);
+        } catch (error) {
+            logger.warn('Agent review specialist failed', {
+                roleName: specialist.name,
+                backend: backend.id,
+                error: toError(error),
+            });
+            return null;
+        }
+    }
+
+    private reportStatus(context: SecurityScanContext, update: SecurityScanStatusUpdate): void {
+        context.reportStatus?.({
+            ...update,
+            scanner: update.scanner || this.name,
+        });
+    }
+
+    private async verifyAgentFindings(
+        findings: AggregatorOutput['findings'],
+        repositoryRoot: string,
+        backend: AgentBackendId,
+        options: {
+            degraded: boolean;
+            deterministicIssues: SecurityIssue[];
+        },
+    ): Promise<SecurityIssue[]> {
+        const deterministicIds = new Set(options.deterministicIssues.map(issue => issue.ruleId));
+        const verifiedIssues: SecurityIssue[] = [];
+
+        for (const finding of findings) {
+            const resolvedPath = path.isAbsolute(finding.filePath)
+                ? finding.filePath
+                : path.join(repositoryRoot, finding.filePath);
+            const verification = await this.verifyFindingLocation(resolvedPath, finding.line, finding.evidence);
+            if (verification.status === 'drop') {
+                continue;
+            }
+
+            const relatedIssueIds = Array.from(new Set([
+                ...(finding.linkedDeterministicFindingIds || []),
+                ...this.matchDeterministicIssueIds(finding, options.deterministicIssues),
+            ]));
+            const groundedByDeterministicFindings = finding.groundedByDeterministicFindings
+                || relatedIssueIds.some(id => deterministicIds.has(id));
+
+            verifiedIssues.push(this.toIssue(finding, {
+                backend,
+                degraded: options.degraded || verification.status === 'unverified',
+                filePath: resolvedPath,
+                groundedByDeterministicFindings,
+                relatedIssueIds,
+                verificationStatus: verification.status === 'verified' ? 'verified' : 'unverified',
+            }));
+        }
+
+        return verifiedIssues;
+    }
+
+    private async verifyFindingLocation(
+        filePath: string,
+        line: number | undefined,
+        evidence: string,
+    ): Promise<{ status: 'verified' | 'unverified' | 'drop' }> {
+        try {
+            const content = await fs.readFile(filePath, 'utf8');
+            const lines = content.split(/\r?\n/);
+            const targetLine = Math.max(1, line ?? 1);
+            if (targetLine > lines.length) {
+                return { status: 'drop' };
+            }
+
+            const nearbyText = lines
+                .slice(Math.max(0, targetLine - 3), Math.min(lines.length, targetLine + 2))
+                .join('\n');
+            const normalizedEvidence = this.normalizeEvidence(evidence);
+            if (!normalizedEvidence) {
+                return { status: 'unverified' };
+            }
+
+            if (this.normalizeEvidence(nearbyText).includes(normalizedEvidence)) {
+                return { status: 'verified' };
+            }
+
+            return { status: 'unverified' };
+        } catch {
+            return { status: 'drop' };
+        }
+    }
+
+    private normalizeEvidence(value: string): string {
+        return value.toLowerCase().replace(/\s+/g, ' ').trim();
+    }
+
+    private matchDeterministicIssueIds(
+        finding: AggregatorOutput['findings'][number],
+        deterministicIssues: SecurityIssue[],
+    ): string[] {
+        return deterministicIssues
+            .filter(issue =>
+                issue.filePath === finding.filePath
+                && issue.line === (finding.line ?? issue.line)
+                && (issue.ruleId === finding.title || issue.title === finding.title)
+            )
+            .map(issue => issue.ruleId);
     }
 
     private async getAvailableBackends(): Promise<Array<{ id: AgentBackendId; config: AgentBackendConfig }>> {
@@ -686,7 +938,8 @@ export class CliAgentReviewScanner implements SecurityScanner {
             'Deterministic findings:',
             this.summarizeDeterministicIssues(input.deterministicIssues),
             `Decide dynamically which specialist review agents are needed for this codebase. Emit at most ${this.maxSpecialists} specialists.`,
-            'Each specialist must have a unique role name, rationale, focus, file/path scope, and specific checks to perform.',
+            'Each specialist must have a unique stable role name, rationale, focus, file/path scope, and specific checks to perform.',
+            'Prefer changed files and requested scan paths over unrelated repository areas.',
             'Return ONLY valid JSON with this shape:',
             JSON.stringify({
                 repoSummary: 'short repository summary',
@@ -725,6 +978,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
             input.specialist.checks.map((check, index) => `${index + 1}. ${check}`).join('\n'),
             'Relevant deterministic findings:',
             this.summarizeDeterministicIssues(relevantFindings),
+            'Every finding must cite exact code evidence from the file and include the most specific line number you can justify.',
             'Return ONLY valid JSON with this shape:',
             JSON.stringify({
                 findings: [{
@@ -750,6 +1004,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         return [
             'You are the final security finding aggregator.',
             'Merge duplicates, prefer deterministic findings when they cover the same issue, and drop speculative or weak agent findings.',
+            'Only keep findings with concrete code evidence, and indicate whether each finding is grounded in deterministic findings.',
             `Repository summary: ${input.repoSummary}`,
             'Deterministic findings:',
             this.summarizeDeterministicIssues(input.deterministicIssues),
@@ -767,21 +1022,40 @@ export class CliAgentReviewScanner implements SecurityScanner {
                     evidence: 'merged evidence summary',
                     remediation: 'recommended remediation',
                     sourceRoles: ['role name'],
+                    groundedByDeterministicFindings: true,
+                    linkedDeterministicFindingIds: ['det.rule.id'],
                 }],
             }, null, 2),
         ].join('\n\n');
     }
 
-    private toIssue(finding: AggregatorOutput['findings'][number]): SecurityIssue {
+    private toIssue(
+        finding: AggregatorOutput['findings'][number],
+        options: {
+            backend: AgentBackendId;
+            degraded: boolean;
+            filePath: string;
+            groundedByDeterministicFindings: boolean;
+            relatedIssueIds: string[];
+            verificationStatus: 'verified' | 'unverified';
+        },
+    ): SecurityIssue {
         const issue: SecurityIssue = {
             ruleId: `agent-review.${this.slugify(finding.title)}`,
             title: finding.title,
             description: `${finding.description}\n\nEvidence: ${finding.evidence}\nRemediation: ${finding.remediation}`,
             severity: this.normalizeSeverity(finding.severity),
-            filePath: finding.filePath,
+            filePath: options.filePath,
             line: finding.line ?? 1,
             source: `agent-review:${finding.sourceRoles.join(', ')}`,
             confidence: finding.confidence,
+            sourceType: options.groundedByDeterministicFindings ? 'agent-grounded' : 'agent-only',
+            groundedByDeterministicFindings: options.groundedByDeterministicFindings,
+            verificationStatus: options.verificationStatus,
+            backend: options.backend,
+            sourceRoles: finding.sourceRoles,
+            relatedIssueIds: options.relatedIssueIds,
+            degraded: options.degraded,
         };
         return issue;
     }

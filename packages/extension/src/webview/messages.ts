@@ -1,4 +1,4 @@
-import type { CodeIssue, IssueSeverity } from '@backbrain/core';
+import type { CodeIssue, IssueSeverity, SecurityScanPhase } from '@backbrain/core';
 
 /**
  * Acquire the VS Code API for webview → extension communication.
@@ -59,6 +59,7 @@ export type ExtensionMessage =
     | { type: 'scanComplete'; issues: IssueData[] }
     | { type: 'scanError'; error: string }
     | { type: 'statusUpdate'; level: 'info' | 'warn' | 'error'; message: string }
+    | { type: 'scanStatus'; phase: SecurityScanPhase; level: 'info' | 'warn' | 'error'; message: string; backend?: string; scanner?: string; degraded?: boolean }
     | { type: 'statusClear' }
     | { type: 'issuesUpdated'; issues: IssueData[]; batchInfo?: { current: number; total: number } }
     | { type: 'explanationStarted'; issueId: string; provider?: string | null }
@@ -115,7 +116,13 @@ export interface IssueData {
     category: string;
     source?: string;
     confidence?: 'high' | 'medium' | 'low';
-    sourceType?: 'deterministic' | 'agent';
+    sourceType?: 'deterministic' | 'agent-grounded' | 'agent-only';
+    verificationStatus?: 'verified' | 'unverified' | 'not_applicable';
+    groundedByDeterministicFindings?: boolean;
+    backend?: string;
+    sourceRoles?: string[];
+    relatedIssueIds?: string[];
+    degraded?: boolean;
 }
 
 /**
@@ -142,10 +149,32 @@ export function toIssueData(issue: CodeIssue): IssueData {
 
     if (issue.source !== undefined) {
         issueData.source = issue.source;
-        issueData.sourceType = issue.source.startsWith('agent-review:') ? 'agent' : 'deterministic';
+    }
+    if (issue.sourceType !== undefined) {
+        issueData.sourceType = issue.sourceType;
+    } else if (issue.source !== undefined) {
+        issueData.sourceType = issue.source.startsWith('agent-review:') ? 'agent-only' : 'deterministic';
     }
     if (issue.confidence !== undefined) {
         issueData.confidence = issue.confidence;
+    }
+    if (issue.verificationStatus !== undefined) {
+        issueData.verificationStatus = issue.verificationStatus;
+    }
+    if (issue.groundedByDeterministicFindings !== undefined) {
+        issueData.groundedByDeterministicFindings = issue.groundedByDeterministicFindings;
+    }
+    if (issue.backend !== undefined) {
+        issueData.backend = issue.backend;
+    }
+    if (issue.sourceRoles !== undefined) {
+        issueData.sourceRoles = issue.sourceRoles;
+    }
+    if (issue.relatedIssueIds !== undefined) {
+        issueData.relatedIssueIds = issue.relatedIssueIds;
+    }
+    if (issue.degraded !== undefined) {
+        issueData.degraded = issue.degraded;
     }
 
     return issueData;

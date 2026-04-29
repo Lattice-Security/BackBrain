@@ -63,10 +63,17 @@
     padding: 2px var(--bb-spacing-sm);
 }
 
-.issue-meta__badge--agent {
+.issue-meta__badge--agent-grounded,
+.issue-meta__badge--agent-only {
     color: var(--bb-color-link);
     border-color: color-mix(in srgb, var(--bb-color-link) 40%, var(--bb-color-border));
     background-color: color-mix(in srgb, var(--bb-color-link) 10%, var(--bb-color-background-secondary));
+}
+
+.issue-meta__badge--agent-grounded {
+    color: var(--bb-severity-high);
+    border-color: color-mix(in srgb, var(--bb-severity-high) 40%, var(--bb-color-border));
+    background-color: color-mix(in srgb, var(--bb-severity-high) 10%, var(--bb-color-background-secondary));
 }
 
 .issue-meta__badge--deterministic {

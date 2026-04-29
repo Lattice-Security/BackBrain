@@ -38,6 +38,13 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
     };
 
     const fileName = issue.filePath.split('/').pop() || issue.filePath;
+    const sourceTypeLabel = issue.sourceType === 'agent-grounded'
+        ? 'ai grounded'
+        : issue.sourceType === 'agent-only'
+            ? 'ai review'
+            : issue.sourceType === 'deterministic'
+                ? 'deterministic'
+                : null;
 
     // Dynamic severity colors using CSS variables
     const severityStyle = {
@@ -98,15 +105,20 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
                 <span>{fileName}:{issue.line}</span>
             </div>
 
-            {(issue.source || issue.confidence) && (
+            {(issue.source || issue.confidence || issue.verificationStatus || issue.backend || issue.degraded || sourceTypeLabel) && (
                 <div className="issue-meta">
-                    {issue.sourceType && (
+                    {sourceTypeLabel && (
                         <span className={`issue-meta__badge issue-meta__badge--${issue.sourceType}`}>
-                            {issue.sourceType === 'agent' ? 'ai review' : 'deterministic'}
+                            {sourceTypeLabel}
                         </span>
                     )}
                     {issue.source && <span className="issue-meta__badge">{issue.source}</span>}
                     {issue.confidence && <span className="issue-meta__badge">confidence: {issue.confidence}</span>}
+                    {issue.verificationStatus && issue.verificationStatus !== 'not_applicable' && (
+                        <span className="issue-meta__badge">verification: {issue.verificationStatus}</span>
+                    )}
+                    {issue.backend && <span className="issue-meta__badge">backend: {issue.backend}</span>}
+                    {issue.degraded && <span className="issue-meta__badge">degraded</span>}
                 </div>
             )}
 

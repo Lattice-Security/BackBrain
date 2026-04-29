@@ -26,6 +26,13 @@ export interface CodeIssue {
     category: IssueCategory;
     source?: string;
     confidence?: 'high' | 'medium' | 'low';
+    sourceType?: 'deterministic' | 'agent-grounded' | 'agent-only';
+    groundedByDeterministicFindings?: boolean;
+    verificationStatus?: 'verified' | 'unverified' | 'not_applicable';
+    backend?: string;
+    sourceRoles?: string[];
+    relatedIssueIds?: string[];
+    degraded?: boolean;
 }
 
 export type CodeIssueType =

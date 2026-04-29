@@ -45,7 +45,9 @@ export async function scanFileCommand(ctx: CommandContext, uri?: vscode.Uri, opt
   try {
     const runScan = async () => {
       const content = await ctx.fileSystem.readFile(filePath);
-      const result = await ctx.securityService.scanFile(filePath, content);
+      const result = await ctx.securityService.scanFile(filePath, content, {
+        onStatus: (update) => ctx.severityPanelProvider.updateScanStatus(update),
+      });
 
       // Merge the file scan result into the existing dashboard state
       ctx.severityPanelProvider.updateFileIssues(filePath, result.issues);

@@ -29,6 +29,7 @@ const App: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [status, setStatus] = useState<{ level: 'info' | 'warn' | 'error'; message: string } | null>(null);
+    const [scanStatus, setScanStatus] = useState<Extract<ExtensionMessage, { type: 'scanStatus' }> | null>(null);
     const [activeFix, setActiveFix] = useState<{ issueId: string; fix: FixData } | null>(null);
     const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
     const [explanations, setExplanations] = useState<Record<string, ExplanationState>>({});
@@ -47,6 +48,7 @@ const App: React.FC = () => {
                 case 'scanStarted':
                     setLoading(true);
                     setError(null);
+                    setScanStatus(null);
                     break;
                 case 'scanComplete':
                     setIssues(message.issues);
@@ -70,6 +72,9 @@ const App: React.FC = () => {
                     break;
                 case 'statusUpdate':
                     setStatus({ level: message.level, message: message.message });
+                    break;
+                case 'scanStatus':
+                    setScanStatus(message);
                     break;
                 case 'statusClear':
                     setStatus(null);
@@ -277,6 +282,37 @@ const App: React.FC = () => {
                             textAlign: 'right'
                         }}>
                             {batchProgress.current} / {batchProgress.total} files
+                        </div>
+                    </div>
+                )}
+
+                {scanStatus && (
+                    <div style={{
+                        marginBottom: 'var(--bb-spacing-md)',
+                        padding: 'var(--bb-spacing-md)',
+                        backgroundColor: scanStatus.level === 'warn'
+                            ? 'var(--vscode-inputValidation-warningBackground, rgba(191, 144, 0, 0.15))'
+                            : 'var(--bb-color-background-secondary)',
+                        borderRadius: 'var(--bb-border-radius-md)',
+                        border: `1px solid ${scanStatus.level === 'warn'
+                            ? 'var(--vscode-inputValidation-warningBorder, #cca700)'
+                            : 'var(--bb-color-border)'}`,
+                    }}>
+                        <div style={{
+                            fontSize: 'var(--bb-font-size-sm)',
+                            fontWeight: 'var(--bb-font-weight-semibold)',
+                            color: 'var(--bb-color-foreground)',
+                            marginBottom: 'var(--bb-spacing-xs)',
+                            textTransform: 'capitalize',
+                        }}>
+                            {scanStatus.phase.replace(/-/g, ' ')}
+                        </div>
+                        <div style={{
+                            fontSize: 'var(--bb-font-size-sm)',
+                            color: 'var(--bb-color-foreground)',
+                        }}>
+                            {scanStatus.message}
+                            {scanStatus.backend ? ` (${scanStatus.backend})` : ''}
                         </div>
                     </div>
                 )}

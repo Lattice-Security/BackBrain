@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { createLogger, type SecurityService } from '@backbrain/core';
+import { createLogger, type SecurityScanStatusUpdate, type SecurityService } from '@backbrain/core';
 import { type WebviewMessage, type IssueData, type FixData, toIssueData } from '../webview/messages';
 import { getActiveProvider } from '../services/ai-adapter-factory';
 
@@ -10,6 +10,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private _issues: IssueData[] = [];
     private _statusMessage: { level: 'info' | 'warn' | 'error'; message: string } | null = null;
+    private _scanStatus: SecurityScanStatusUpdate | null = null;
     private _isScanning = false;
     private _lastScanError: string | null = null;
     private _lastBatchProgress: { current: number; total: number } | null = null;
@@ -59,6 +60,11 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     public clearStatus(): void {
         this._statusMessage = null;
         this._postMessage({ type: 'statusClear' });
+    }
+
+    public updateScanStatus(update: SecurityScanStatusUpdate): void {
+        this._scanStatus = update;
+        this._postMessage({ type: 'scanStatus', ...update });
     }
 
     public async startWorkspaceScan(): Promise<void> {
@@ -162,6 +168,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         this._isScanning = true;
         this._lastScanError = null;
         this._lastBatchProgress = null;
+        this._scanStatus = null;
         this._scanCancelTokenSource = new vscode.CancellationTokenSource();
         const token = this._scanCancelTokenSource.token;
 
@@ -246,7 +253,9 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                 const batch = scanQueue.slice(i, i + batchSize);
                 const batchStartTime = Date.now();
 
-                const results = await this._securityService.scan(batch);
+                const results = await this._securityService.scan(batch, {
+                    onStatus: (update) => this.updateScanStatus(update),
+                });
 
                 const newIssues = results.issues.map(toIssueData);
                 this._issues.push(...newIssues);
@@ -270,6 +279,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
 
             const totalDuration = Date.now() - startTime;
             logger.info(`Workspace scan complete: ${this._issues.length} issues found in ${totalDuration}ms`);
+            this.setStatus('info', `Workspace scan complete: ${this._issues.length} issue(s) found in ${Math.round(totalDuration / 100) / 10}s.`);
             this._postMessage({ type: 'scanComplete', issues: this._issues });
 
         } catch (error) {
@@ -452,6 +462,9 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private _syncStateToWebview(): void {
         if (this._statusMessage) {
             this._postMessage({ type: 'statusUpdate', ...this._statusMessage });
+        }
+        if (this._scanStatus) {
+            this._postMessage({ type: 'scanStatus', ...this._scanStatus });
         }
         if (this._isScanning) {
             this._postMessage({ type: 'scanStarted' });
