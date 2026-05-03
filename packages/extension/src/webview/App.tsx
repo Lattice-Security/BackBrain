@@ -32,6 +32,7 @@ const App: React.FC = () => {
     const [scanStatus, setScanStatus] = useState<Extract<ExtensionMessage, { type: 'scanStatus' }> | null>(null);
     const [activeFix, setActiveFix] = useState<{ issueId: string; fix: FixData } | null>(null);
     const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
+    const [activeScannerMode, setActiveScannerMode] = useState<'file' | 'workspace'>('workspace');
     const [explanations, setExplanations] = useState<Record<string, ExplanationState>>({});
 
     // Persist issues whenever they change
@@ -145,10 +146,12 @@ const App: React.FC = () => {
     }, []);
 
     const handleScan = () => {
+        setActiveScannerMode('workspace');
         vscode.postMessage({ type: 'requestScan' });
     };
 
     const handleScanFile = () => {
+        setActiveScannerMode('file');
         vscode.postMessage({ type: 'requestScanFile' });
     };
 
@@ -179,7 +182,7 @@ const App: React.FC = () => {
                         Security Issues
                     </h2>
                     <vscode-button
-                        appearance="secondary"
+                        appearance={activeScannerMode === 'file' ? 'primary' : 'secondary'}
                         onClick={handleScanFile}
                         disabled={loading || undefined}
                         style={{ marginRight: 'var(--bb-spacing-sm)' }}
@@ -187,7 +190,7 @@ const App: React.FC = () => {
                         File
                     </vscode-button>
                     <vscode-button
-                        appearance="primary"
+                        appearance={activeScannerMode === 'workspace' ? 'primary' : 'secondary'}
                         onClick={handleScan}
                         disabled={loading || undefined}
                     >
