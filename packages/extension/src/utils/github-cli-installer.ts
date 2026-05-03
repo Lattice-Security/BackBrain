@@ -67,7 +67,16 @@ const TOOL_DESCRIPTORS: Record<string, ToolDescriptor> = {
             darwin: [/darwin_amd64/i, /darwin_arm64/i],
             win32: [/windows_amd64.*\.exe$/i, /windows_x86_64.*\.exe$/i, /windows_amd64.*\.zip$/i],
         },
-        binaryCandidates: ['osv-scanner', 'osv-scanner.exe'],
+        binaryCandidates: [
+            'osv-scanner', 
+            'osv-scanner.exe',
+            'osv-scanner_linux_amd64',
+            'osv-scanner_linux_x86_64',
+            'osv-scanner_darwin_amd64',
+            'osv-scanner_darwin_arm64',
+            'osv-scanner_windows_amd64.exe',
+            'osv-scanner_windows_x86_64.exe'
+        ],
     },
 };
 
