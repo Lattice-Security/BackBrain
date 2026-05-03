@@ -193,10 +193,10 @@ export class GitHubCliInstaller {
             return;
         }
 
-        const fileName = path.basename(archivePath);
-        const copyPath = path.join(targetDir, fileName);
-        if (copyPath !== archivePath) {
-            this.fs.copyFileSync(archivePath, copyPath);
+        // Not an archive — treat the downloaded file as a bare executable.
+        // Mark it executable so findBinary() can locate it.
+        if (process.platform !== 'win32') {
+            this.fs.chmodSync(archivePath, 0o755);
         }
     }
 
