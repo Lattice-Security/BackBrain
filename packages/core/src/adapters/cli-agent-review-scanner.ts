@@ -39,7 +39,7 @@ interface BackendExecutionOptions {
 interface BackendReadinessState {
     ready: boolean;
     diagnostics?: {
-        category: 'auth' | 'network' | 'filesystem' | 'unknown';
+        category: 'auth' | 'rate-limit' | 'network' | 'filesystem' | 'unknown';
         hint: string;
     };
 }
@@ -632,6 +632,15 @@ export class CliAgentReviewScanner implements SecurityScanner {
             return state;
         } catch (error) {
             const diagnostics = this.classifyBackendFailure(id, error as ExecLikeError);
+
+            // Rate-limited backends ARE authenticated — treat as ready
+            if (diagnostics.category === 'rate-limit') {
+                logger.info('Agent review backend is rate-limited but authenticated', { backend: id });
+                const state: BackendReadinessState = { ready: true, diagnostics };
+                this.readinessCache.set(id, state);
+                return state;
+            }
+
             logger.warn('Agent review backend failed readiness probe', {
                 backend: id,
                 diagnostics,
@@ -811,11 +820,27 @@ export class CliAgentReviewScanner implements SecurityScanner {
     }
 
     private classifyBackendFailure(backend: AgentBackendId, error: ExecLikeError): {
-        category: 'auth' | 'network' | 'filesystem' | 'unknown';
+        category: 'auth' | 'rate-limit' | 'network' | 'filesystem' | 'unknown';
         hint: string;
     } {
         const text = [error.message, error.stderr, error.stdout].filter(Boolean).join('\n');
         const normalized = text.toLowerCase();
+
+        // Rate-limit / capacity errors — user IS authenticated, just throttled
+        if (
+            normalized.includes('429') ||
+            normalized.includes('rate_limit') ||
+            normalized.includes('ratelimitexceeded') ||
+            normalized.includes('resource_exhausted') ||
+            normalized.includes('model_capacity_exhausted') ||
+            normalized.includes('no capacity available') ||
+            normalized.includes('quota')
+        ) {
+            return {
+                category: 'rate-limit',
+                hint: `${backend} is authenticated but temporarily rate-limited. It will retry automatically.`,
+            };
+        }
 
         if (
             normalized.includes('authentication page') ||

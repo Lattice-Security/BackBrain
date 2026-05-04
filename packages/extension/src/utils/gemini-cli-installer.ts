@@ -43,26 +43,77 @@ export class GeminiCliInstaller {
     }
 
     /**
-     * Check if the Gemini CLI is authenticated by running a lightweight probe.
-     * Returns true if gemini can respond to a simple prompt without auth errors.
+     * Check if the Gemini CLI is authenticated.
+     *
+     * Uses a fast-path: if OAuth credential files exist with a refresh_token,
+     * we know the user is authenticated without running an expensive CLI probe.
+     * Falls back to a CLI probe only when credential files are missing.
      */
     async isAuthenticated(): Promise<boolean> {
+        // Fast-path: check credential files directly
+        const credentialStatus = this.checkCredentialFiles();
+        if (credentialStatus === 'authenticated') {
+            logger.info('Gemini CLI authenticated (credential files present)');
+            return true;
+        }
+        if (credentialStatus === 'no-credentials') {
+            logger.info('Gemini CLI not authenticated (no credential files)');
+            return false;
+        }
+
+        // API key auth — verify with a lightweight probe
+        return this.runAuthProbe();
+    }
+
+    /**
+     * Check credential files for a fast auth determination.
+     * Returns 'authenticated' if OAuth creds exist, 'api-key' if GEMINI_API_KEY is set,
+     * or 'no-credentials' if neither is found.
+     */
+    private checkCredentialFiles(): 'authenticated' | 'api-key' | 'no-credentials' {
+        // Check for GEMINI_API_KEY environment variable
+        if (process.env.GEMINI_API_KEY) {
+            return 'api-key';
+        }
+
+        // Check for OAuth credential file
+        const credPath = path.join(os.homedir(), '.gemini', 'oauth_creds.json');
+        try {
+            if (fs.existsSync(credPath)) {
+                const raw = fs.readFileSync(credPath, 'utf8');
+                const creds = JSON.parse(raw);
+                if (creds.refresh_token) {
+                    return 'authenticated';
+                }
+            }
+        } catch {
+            // Credential file exists but is corrupt/unreadable — fall through
+        }
+
+        return 'no-credentials';
+    }
+
+    /**
+     * Run a lightweight CLI probe to verify auth.
+     * Handles rate-limit errors correctly (authenticated but throttled = true).
+     */
+    private async runAuthProbe(): Promise<boolean> {
         const binaryPath = this.getBinaryPath();
         try {
             const { stdout, stderr } = await this.exec(
-                `${this.quotePath(binaryPath)} --approval-mode plan --output-format json -p "Return ONLY this exact JSON: {\\"ready\\":true}"`,
+                `${this.quotePath(binaryPath)} --approval-mode plan --output-format json -p "Return ONLY this exact JSON: {\\\"ready\\\":true}"`,
                 15000,
             );
             const combined = (stdout + stderr).toLowerCase();
 
+            // Rate-limit / capacity errors mean the user IS authenticated
+            if (this.isRateLimitError(combined)) {
+                logger.info('Gemini CLI is authenticated but rate-limited');
+                return true;
+            }
+
             // Check for auth failure indicators
-            if (
-                combined.includes('authentication') ||
-                combined.includes('unauthenticated') ||
-                combined.includes('sign in') ||
-                combined.includes('login') ||
-                combined.includes('api_key_invalid')
-            ) {
+            if (this.isAuthFailure(combined)) {
                 logger.info('Gemini CLI is installed but not authenticated');
                 return false;
             }
@@ -72,13 +123,11 @@ export class GeminiCliInstaller {
                 const trimmed = stdout.trim();
                 if (trimmed) {
                     const parsed = JSON.parse(trimmed);
-                    // Gemini wraps response in an envelope
                     if (parsed.response || parsed.ready === true) {
                         return true;
                     }
                 }
             } catch {
-                // If we got output without auth errors, it's likely working
                 if (stdout.trim().length > 0) {
                     return true;
                 }
@@ -91,25 +140,114 @@ export class GeminiCliInstaller {
                 .join('\n')
                 .toLowerCase();
 
-            // Timeout is not an auth issue — it might just be slow
+            // Rate-limit errors mean the user IS authenticated
+            if (this.isRateLimitError(errorText)) {
+                logger.info('Gemini CLI is authenticated but rate-limited (from error)');
+                return true;
+            }
+
+            // Timeout is not an auth issue
             if (errorText.includes('timeout') || errorText.includes('timed out')) {
                 logger.warn('Gemini CLI auth check timed out — assuming available');
                 return true;
             }
 
             // Auth-related failures
-            if (
-                errorText.includes('authentication') ||
-                errorText.includes('unauthenticated') ||
-                errorText.includes('sign in') ||
-                errorText.includes('api_key_invalid') ||
-                errorText.includes("you've hit your usage limit")
-            ) {
+            if (this.isAuthFailure(errorText)) {
                 return false;
             }
 
             logger.warn('Gemini CLI auth check failed with unexpected error', { error });
             return false;
+        }
+    }
+
+    /**
+     * Check if error text indicates a rate-limit (user IS authenticated).
+     */
+    private isRateLimitError(text: string): boolean {
+        return (
+            text.includes('429') ||
+            text.includes('rate_limit') ||
+            text.includes('ratelimitexceeded') ||
+            text.includes('resource_exhausted') ||
+            text.includes('model_capacity_exhausted') ||
+            text.includes('no capacity available') ||
+            text.includes('quota')
+        );
+    }
+
+    /**
+     * Check if error text indicates an authentication failure.
+     */
+    private isAuthFailure(text: string): boolean {
+        return (
+            text.includes('unauthenticated') ||
+            text.includes('sign in') ||
+            text.includes('api_key_invalid') ||
+            (text.includes('authentication') && !text.includes('authenticated'))
+        );
+    }
+
+    /**
+     * Get the email of the currently authenticated Google account, if any.
+     */
+    getAuthenticatedAccount(): string | null {
+        const accountsPath = path.join(os.homedir(), '.gemini', 'google_accounts.json');
+        try {
+            if (fs.existsSync(accountsPath)) {
+                const raw = fs.readFileSync(accountsPath, 'utf8');
+                const accounts = JSON.parse(raw);
+                if (accounts.active && typeof accounts.active === 'string') {
+                    return accounts.active;
+                }
+            }
+        } catch {
+            // Ignore read errors
+        }
+
+        // Check for API key auth
+        if (process.env.GEMINI_API_KEY) {
+            return '(API Key)';
+        }
+
+        return null;
+    }
+
+    /**
+     * Logout from Gemini CLI by clearing cached OAuth credentials.
+     */
+    async logout(): Promise<void> {
+        const geminiDir = path.join(os.homedir(), '.gemini');
+        const credPath = path.join(geminiDir, 'oauth_creds.json');
+        const accountsPath = path.join(geminiDir, 'google_accounts.json');
+
+        let cleared = false;
+
+        // Remove OAuth credentials
+        try {
+            if (fs.existsSync(credPath)) {
+                fs.unlinkSync(credPath);
+                cleared = true;
+                logger.info('Removed Gemini CLI OAuth credentials');
+            }
+        } catch (error) {
+            logger.warn('Failed to remove OAuth credentials', { error });
+        }
+
+        // Reset accounts file
+        try {
+            if (fs.existsSync(accountsPath)) {
+                fs.writeFileSync(accountsPath, JSON.stringify({ active: null, old: [] }), 'utf8');
+                cleared = true;
+                logger.info('Reset Gemini CLI accounts file');
+            }
+        } catch (error) {
+            logger.warn('Failed to reset accounts file', { error });
+        }
+
+        if (!cleared) {
+            logger.info('No Gemini CLI credentials to clear');
         }
     }
 

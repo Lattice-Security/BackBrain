@@ -50,6 +50,10 @@
       {
         "command": "backbrain.loginGemini",
         "title": "BackBrain: Login to Gemini CLI"
+      },
+      {
+        "command": "backbrain.logoutGemini",
+        "title": "BackBrain: Logout from Gemini CLI"
       }
     ],
     "configuration": {

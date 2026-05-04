@@ -64,23 +64,18 @@ export function registerLoginGeminiCommand(context: vscode.ExtensionContext): vs
             }
         }
 
-        // Step 2: Check if already authenticated
-        const isAuthed = await vscode.window.withProgress(
-            {
-                location: vscode.ProgressLocation.Notification,
-                title: 'Checking Gemini CLI authentication...',
-                cancellable: false,
-            },
-            async () => {
-                return installer.isAuthenticated();
-            },
-        );
-
-        if (isAuthed) {
-            vscode.window.showInformationMessage(
-                'Gemini CLI is already authenticated and ready to use!',
+        // Step 2: Check if already authenticated and show current account
+        const currentAccount = installer.getAuthenticatedAccount();
+        if (currentAccount) {
+            const choice = await vscode.window.showInformationMessage(
+                `Gemini CLI is signed in as ${currentAccount}. Re-authenticate with a different account?`,
+                'Re-authenticate',
+                'Cancel',
             );
-            return;
+
+            if (choice !== 'Re-authenticate') {
+                return;
+            }
         }
 
         // Step 3: Open login terminal
@@ -100,10 +95,12 @@ export function registerLoginGeminiCommand(context: vscode.ExtensionContext): vs
 
                 const nowAuthed = await installer.isAuthenticated();
                 if (nowAuthed) {
+                    const account = installer.getAuthenticatedAccount();
+                    const accountInfo = account ? ` as ${account}` : '';
                     vscode.window.showInformationMessage(
-                        '✅ Gemini CLI authenticated successfully! AI agent review is now available.',
+                        `✅ Gemini CLI authenticated${accountInfo}! AI agent review is now available.`,
                     );
-                    logger.info('Gemini CLI authentication completed successfully');
+                    logger.info('Gemini CLI authentication completed successfully', { account });
                 } else {
                     vscode.window.showWarningMessage(
                         'Gemini CLI authentication may not have completed. You can try again with "BackBrain: Login to Gemini CLI".',

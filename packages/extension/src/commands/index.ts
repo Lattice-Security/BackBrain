@@ -11,6 +11,7 @@ import { registerBatchFixCommand } from './batchFixCommand';
 import { registerGenerateReportCommand } from './generateReportCommand';
 import { registerSetApiKeyCommand } from './setApiKeyCommand';
 import { registerLoginGeminiCommand } from './loginGeminiCommand';
+import { registerLogoutGeminiCommand } from './logoutGeminiCommand';
 
 import { SeverityPanelProvider } from '../views/severity-panel-provider';
 
@@ -36,6 +37,7 @@ export function registerCommands(context: vscode.ExtensionContext, ctx: CommandC
     registerGenerateReportCommand(context, ctx.severityPanelProvider),
     // Configuration commands
     registerSetApiKeyCommand(context),
-    registerLoginGeminiCommand(context)
+    registerLoginGeminiCommand(context),
+    registerLogoutGeminiCommand(context)
   );
 }
