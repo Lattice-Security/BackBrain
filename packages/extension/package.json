@@ -46,6 +46,10 @@
       {
         "command": "backbrain.setApiKey",
         "title": "BackBrain: Set AI API Key"
+      },
+      {
+        "command": "backbrain.loginGemini",
+        "title": "BackBrain: Login to Gemini CLI"
       }
     ],
     "configuration": {

@@ -10,6 +10,7 @@ import { registerRevertFixCommand } from './revertFixCommand';
 import { registerBatchFixCommand } from './batchFixCommand';
 import { registerGenerateReportCommand } from './generateReportCommand';
 import { registerSetApiKeyCommand } from './setApiKeyCommand';
+import { registerLoginGeminiCommand } from './loginGeminiCommand';
 
 import { SeverityPanelProvider } from '../views/severity-panel-provider';
 
@@ -33,7 +34,8 @@ export function registerCommands(context: vscode.ExtensionContext, ctx: CommandC
     registerBatchFixCommand(context),
     // Report command (Phase 11)
     registerGenerateReportCommand(context, ctx.severityPanelProvider),
-    // Configuration command
-    registerSetApiKeyCommand(context)
+    // Configuration commands
+    registerSetApiKeyCommand(context),
+    registerLoginGeminiCommand(context)
   );
 }

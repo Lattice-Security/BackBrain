@@ -23,6 +23,7 @@ import { VibeRuleLoader } from './utils/vibe-rule-loader';
 import { initializeAIKeyService } from './services/ai-key-service';
 import { initializeFixHistoryService } from './services/fix-history-service';
 import { registerFixPreviewProvider } from './services/fix-preview-provider';
+import { GeminiCliInstaller } from './utils/gemini-cli-installer';
 
 const logger = createLogger('Extension');
 
@@ -62,6 +63,67 @@ async function ensureOptionalScannerToolsInstalled(
         }
       });
     }
+  }
+}
+
+async function ensureGeminiCliReady(
+  geminiInstaller: GeminiCliInstaller,
+): Promise<void> {
+  // Step 1: Check if Gemini CLI is installed
+  const isInstalled = await geminiInstaller.isInstalled();
+  if (!isInstalled) {
+    const choice = await vscode.window.showInformationMessage(
+      'BackBrain: Gemini CLI is not installed. Install it for AI-powered agent security reviews (free tier: 60 req/min)?',
+      'Install',
+      'Skip',
+    );
+
+    if (choice !== 'Install') {
+      logger.info('User skipped Gemini CLI installation');
+      return;
+    }
+
+    try {
+      await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Installing Gemini CLI...',
+        cancellable: false,
+      }, async (progress) => {
+        progress.report({ message: 'Running npm install -g @google/gemini-cli...' });
+        await geminiInstaller.install();
+      });
+      vscode.window.showInformationMessage('Gemini CLI installed successfully!');
+    } catch (err) {
+      logger.warn('Failed to install Gemini CLI', { error: err });
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      vscode.window.showWarningMessage(
+        `BackBrain: Failed to install Gemini CLI. ${errorMsg}`,
+        'Learn More',
+      ).then(choice => {
+        if (choice === 'Learn More') {
+          vscode.env.openExternal(vscode.Uri.parse('https://github.com/google-gemini/gemini-cli'));
+        }
+      });
+      return;
+    }
+  } else {
+    logger.info('Gemini CLI found', { path: geminiInstaller.getBinaryPath() });
+  }
+
+  // Step 2: Check authentication
+  const isAuthed = await geminiInstaller.isAuthenticated();
+  if (!isAuthed) {
+    const choice = await vscode.window.showInformationMessage(
+      'BackBrain: Gemini CLI is installed but not authenticated. Sign in to enable AI agent reviews.',
+      'Login',
+      'Later',
+    );
+
+    if (choice === 'Login') {
+      vscode.commands.executeCommand('backbrain.loginGemini');
+    }
+  } else {
+    logger.info('Gemini CLI is authenticated and ready');
   }
 }
 
@@ -232,6 +294,9 @@ export async function activate(context: vscode.ExtensionContext) {
       }));
     }
 
+    // Create the Gemini CLI installer instance
+    const geminiInstaller = new GeminiCliInstaller();
+
     try {
       scanners.forEach((scanner) => {
         try {
@@ -291,6 +356,13 @@ export async function activate(context: vscode.ExtensionContext) {
       },
     ).catch((error) => {
       logger.warn('Optional scanner installation flow failed', { error });
+    });
+
+    // Ensure Gemini CLI is installed and authenticated (non-blocking)
+    const geminiSetupPromise = ensureGeminiCliReady(
+      geminiInstaller,
+    ).catch((error) => {
+      logger.warn('Gemini CLI setup flow failed', { error });
     });
 
     // Load Vibe rules and setup watcher
@@ -441,6 +513,7 @@ export async function activate(context: vscode.ExtensionContext) {
     logger.info('BackBrain extension activated successfully');
 
     void optionalToolInstallPromise;
+    void geminiSetupPromise;
     if (!isSemgrepAvailable) {
       void ensureSemgrepInstalled(installer, semgrepScanners, severityPanelProvider);
     }
