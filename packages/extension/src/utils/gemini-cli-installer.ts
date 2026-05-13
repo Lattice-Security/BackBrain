@@ -311,7 +311,7 @@ export class GeminiCliInstaller {
         });
 
         terminal.show();
-        terminal.sendText(`${binaryPath}`, true);
+        terminal.sendText(`${binaryPath} auth`, true);
 
         logger.info('Opened Gemini CLI login terminal');
         return terminal;

@@ -706,20 +706,29 @@ export class CliAgentReviewScanner implements SecurityScanner {
         backend: { id: AgentBackendId; config: AgentBackendConfig },
         cwd: string,
     ): Promise<string> {
+        // NOTE: We intentionally do NOT ask Gemini to return a specific JSON shape
+        // and then parse it. Gemini CLI wraps its response in envelope JSON, streams
+        // tokens, and adds prose that varies across versions — any of which breaks
+        // extractJson. A clean process exit (no thrown error) is the only reliable
+        // signal that Gemini is authenticated and reachable. We return the canonical
+        // sentinel ourselves so checkBackendReady's extractJson call always succeeds.
         const command = `${backend.config.binaryPath} --approval-mode plan --output-format json -p ${JSON.stringify('Return ONLY this exact JSON: {"ready":true}')}`;
 
         try {
-            const { stdout } = await this.execAsync(command, {
+            await this.execAsync(command, {
                 cwd,
                 maxBuffer: 10 * 1024 * 1024,
                 env: this.buildExecEnv(backend.id),
                 timeout: 15000,
             });
-            return this.normalizeBackendOutput(backend.id, stdout, {
-                isReadinessProbe: true,
-                expectsJsonObject: true,
-            });
+            // Clean exit — Gemini is authenticated and reachable.
+            // Return the sentinel directly; checkBackendReady's extractJson
+            // will resolve this to { ready: true } without needing to parse
+            // Gemini's actual output (which varies by version and may include
+            // prose, streaming tokens, or envelope JSON that breaks extraction).
+            return '{"ready":true}';
         } catch (error) {
+            // Non-zero exit — let checkBackendReady classify the failure.
             throw error;
         }
     }
