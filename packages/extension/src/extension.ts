@@ -271,6 +271,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
     if (aiReviewEnabled) {
       logger.info('Registering AI agent review scanner');
+
+      // Track which backends have already fired a notification this session so
+      // we never spam the user with repeated toasts for the same failure.
+      const authFailureNotified = new Set<string>();
+
       scanners.push(new CliAgentReviewScanner({
         maxSpecialists: maxAgentSpecialists,
         specialistConcurrency: agentSpecialistConcurrency,
@@ -290,6 +295,31 @@ export async function activate(context: vscode.ExtensionContext) {
             enabled: enabledAgentBackends.includes('opencode'),
             ...(agentBinaryPaths.opencode ? { binaryPath: agentBinaryPaths.opencode } : {}),
           },
+        },
+        onAuthFailure: (backend) => {
+          // After the user logs in and a new scan runs, the cache is cleared so
+          // the probe fires again. Reset the notification guard at that point so
+          // a subsequent genuine failure is still surfaced.
+          if (authFailureNotified.has(backend)) {
+            return;
+          }
+          authFailureNotified.add(backend);
+          logger.warn('Agent backend authentication failure — surfacing user notification', { backend });
+
+          vscode.window.showErrorMessage(
+            `BackBrain: ${backend} is not authenticated. AI agent review is unavailable until you sign in.`,
+            'Login to Gemini',
+            'Reload Window',
+          ).then(choice => {
+            // After the user takes action, clear the guard so a future failure
+            // (e.g. token expires again) is surfaced properly.
+            authFailureNotified.delete(backend);
+            if (choice === 'Login to Gemini') {
+              void vscode.commands.executeCommand('backbrain.loginGemini');
+            } else if (choice === 'Reload Window') {
+              void vscode.commands.executeCommand('workbench.action.reloadWindow');
+            }
+          });
         },
       }));
     }

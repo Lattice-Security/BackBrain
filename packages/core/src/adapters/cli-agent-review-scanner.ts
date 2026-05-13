@@ -2,6 +2,7 @@ import { exec } from 'child_process';
 import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import * as path from 'path';
+import * as os from 'os';
 import { z } from 'zod';
 
 import type {
@@ -51,6 +52,12 @@ export interface CliAgentReviewScannerOptions {
     reviewScope?: 'workspace' | 'changed-files' | 'both';
     preferredBackend?: AgentBackendId;
     backends?: Partial<Record<AgentBackendId, Partial<AgentBackendConfig>>>;
+    /**
+     * Called when a backend fails with a confirmed auth error.
+     * Use this from the extension layer to show a VS Code notification
+     * without introducing a VS Code dependency in core.
+     */
+    onAuthFailure?: (backend: AgentBackendId) => void;
 }
 
 const plannerSchema = z.object({
@@ -107,6 +114,13 @@ export class CliAgentReviewScanner implements SecurityScanner {
     private readonly reviewScope: 'workspace' | 'changed-files' | 'both';
     private readonly preferredBackend: AgentBackendId | undefined;
     private readonly backends: Record<AgentBackendId, AgentBackendConfig>;
+    private readonly onAuthFailure: ((backend: AgentBackendId) => void) | undefined;
+    /**
+     * Readiness cache — only stores outcomes that are stable across a session:
+     *   ready: true  (including rate-limited)  → cached permanently
+     *   ready: false, category filesystem/unknown-binary → cached permanently
+     *   ready: false, category auth/network/unknown → NOT cached (re-probe next scan)
+     */
     private readonly readinessCache = new Map<AgentBackendId, BackendReadinessState>();
 
     constructor(options: CliAgentReviewScannerOptions = {}) {
@@ -115,6 +129,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         this.specialistConcurrency = Math.max(1, options.specialistConcurrency ?? 3);
         this.reviewScope = options.reviewScope ?? 'both';
         this.preferredBackend = options.preferredBackend;
+        this.onAuthFailure = options.onAuthFailure;
         this.backends = {
             codex: {
                 enabled: true,
@@ -609,6 +624,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
 
         const versionOk = await this.checkBackendAvailable(id, config);
         if (!versionOk) {
+            // Binary not found — this is a permanent installation issue; cache it.
             const state: BackendReadinessState = {
                 ready: false,
                 diagnostics: {
@@ -625,15 +641,19 @@ export class CliAgentReviewScanner implements SecurityScanner {
             const parsed = this.extractJson(probeOutput) as { ready?: boolean };
             const ready = parsed.ready === true;
             const state: BackendReadinessState = { ready };
-            this.readinessCache.set(id, state);
-            if (!ready) {
+            // A ready-true result is stable for the session; cache it.
+            if (ready) {
+                this.readinessCache.set(id, state);
+            } else {
                 logger.warn('Agent review backend failed readiness probe', { backend: id });
+                // Do not cache: we want to re-probe next time in case the environment
+                // or credentials are fixed without a full reload.
             }
             return state;
         } catch (error) {
             const diagnostics = this.classifyBackendFailure(id, error as ExecLikeError);
 
-            // Rate-limited backends ARE authenticated — treat as ready
+            // Rate-limited — user IS authenticated; cache as ready.
             if (diagnostics.category === 'rate-limit') {
                 logger.info('Agent review backend is rate-limited but authenticated', { backend: id });
                 const state: BackendReadinessState = { ready: true, diagnostics };
@@ -645,8 +665,21 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 backend: id,
                 diagnostics,
             });
+
+            // Auth and network failures are transient — do not cache so the next
+            // scan attempt re-probes (e.g. user ran `backbrain.loginGemini` and
+            // retries without reloading the window).
+            const isTransient = diagnostics.category === 'auth' || diagnostics.category === 'network';
             const state: BackendReadinessState = { ready: false, diagnostics };
-            this.readinessCache.set(id, state);
+            if (!isTransient) {
+                this.readinessCache.set(id, state);
+            }
+
+            // Notify the extension layer so it can surface an actionable toast.
+            if (diagnostics.category === 'auth') {
+                this.onAuthFailure?.(id);
+            }
+
             return state;
         }
     }
@@ -810,12 +843,26 @@ export class CliAgentReviewScanner implements SecurityScanner {
     }
 
     private buildExecEnv(backend: AgentBackendId): NodeJS.ProcessEnv {
-        const env = { ...process.env };
+        // VS Code's extension host can strip or corrupt HOME, PATH, and XDG_*
+        // variables. Gemini CLI (and others) rely on these to locate credentials
+        // and runtime state. Resolve them defensively before spawning any child
+        // process so the binary can always find its auth files.
+        const home = process.env.HOME || os.homedir();
+        const env: NodeJS.ProcessEnv = {
+            ...process.env,
+            HOME: home,
+            PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+            // Gemini CLI resolves credentials via $XDG_CONFIG_HOME/gemini/
+            // (falls back to $HOME/.config/gemini/ when the var is absent, but
+            // only if HOME itself is correct — set both to be safe).
+            XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME || path.join(home, '.config'),
+        };
+
         if (backend === 'opencode') {
-            env.XDG_CACHE_HOME = env.XDG_CACHE_HOME || '/tmp/opencode-cache';
-            env.XDG_DATA_HOME = env.XDG_DATA_HOME || '/tmp/opencode-data';
-            env.XDG_CONFIG_HOME = env.XDG_CONFIG_HOME || '/tmp/opencode-config';
+            env.XDG_CACHE_HOME = env.XDG_CACHE_HOME || path.join(home, '.cache');
+            env.XDG_DATA_HOME  = env.XDG_DATA_HOME  || path.join(home, '.local', 'share');
         }
+
         return env;
     }
 
