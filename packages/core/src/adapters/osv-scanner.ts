@@ -162,7 +162,7 @@ export class OSVScanner extends CliScannerBase {
             const stdout = await this.execOsv(`${this.binaryPath} --version`);
             // v2 output contains "osv-scanner version: 2.x.x"
             const match = stdout.match(/version:\s*(\d+)/i);
-            if (match && parseInt(match[1], 10) >= 2) {
+            if (match && parseInt(match[1] ?? '0', 10) >= 2) {
                 this.cliVersion = 2;
             } else {
                 // Also try running "scan --help" to detect v2

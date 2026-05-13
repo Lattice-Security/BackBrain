@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import * as path from 'path';
@@ -46,7 +46,7 @@ interface BackendReadinessState {
 }
 
 export interface CliAgentReviewScannerOptions {
-    execFn?: typeof exec;
+    execFileFn?: typeof execFile;
     maxSpecialists?: number;
     specialistConcurrency?: number;
     reviewScope?: 'workspace' | 'changed-files' | 'both';
@@ -108,7 +108,7 @@ type AggregatorOutput = z.infer<typeof aggregatorSchema>;
 export class CliAgentReviewScanner implements SecurityScanner {
     readonly name = 'agent-review';
     readonly scanKind = 'agent' as const;
-    private readonly execFn: typeof exec;
+    private readonly execFileFn: typeof execFile;
     private readonly maxSpecialists: number;
     private readonly specialistConcurrency: number;
     private readonly reviewScope: 'workspace' | 'changed-files' | 'both';
@@ -124,7 +124,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
     private readonly readinessCache = new Map<AgentBackendId, BackendReadinessState>();
 
     constructor(options: CliAgentReviewScannerOptions = {}) {
-        this.execFn = options.execFn || exec;
+        this.execFileFn = options.execFileFn || execFile;
         this.maxSpecialists = Math.max(1, options.maxSpecialists ?? 6);
         this.specialistConcurrency = Math.max(1, options.specialistConcurrency ?? 3);
         this.reviewScope = options.reviewScope ?? 'both';
@@ -149,8 +149,17 @@ export class CliAgentReviewScanner implements SecurityScanner {
         };
     }
 
-    private get execAsync() {
-        return promisify(this.execFn);
+    /**
+     * Spawn a binary with an explicit args array, bypassing the shell entirely.
+     * Using execFile instead of exec prevents shell metacharacters in prompts
+     * (backticks, semicolons, $(...), etc.) from being interpreted by /bin/sh.
+     */
+    private execFileAsync(
+        binary: string,
+        args: string[],
+        options: Parameters<typeof execFile>[2],
+    ): Promise<{ stdout: string; stderr: string }> {
+        return promisify(this.execFileFn)(binary, args, options ?? {}) as Promise<{ stdout: string; stderr: string }>;
     }
 
     getSupportedExtensions(): string[] {
@@ -332,11 +341,39 @@ export class CliAgentReviewScanner implements SecurityScanner {
         });
         try {
             const aggregatorRaw = await this.runBackend(leadBackend, aggregatorPrompt, repositoryRoot);
-            const aggregated = aggregatorSchema.parse(this.extractJson(aggregatorRaw));
-            aggregatedFindings = aggregated.findings;
+
+            // Attempt 1: standard extraction + Zod validation.
+            let aggregated: AggregatorOutput | undefined;
+            try {
+                aggregated = aggregatorSchema.parse(this.extractJson(aggregatorRaw));
+            } catch (firstError) {
+                // Attempt 2: more aggressive extraction and field normalisation.
+                // Gemini may return the JSON wrapped in prose, markdown fences without
+                // a language tag, or with enum values in the wrong case / line numbers
+                // set to 0. Try to salvage the output before falling back entirely.
+                logger.info('Agent review aggregator: standard parse failed; trying lenient extraction', {
+                    backend: leadBackend.id,
+                    firstError: toError(firstError),
+                });
+                try {
+                    const extracted = this.extractJsonAggressive(aggregatorRaw);
+                    const normalised = this.normalizeAggregatorFindings(extracted);
+                    aggregated = aggregatorSchema.parse(normalised);
+                } catch (secondError) {
+                    // Both attempts failed — re-throw the original error so the outer
+                    // catch logs the real root cause and activates the last-resort fallback.
+                    logger.warn('Agent review aggregator: lenient extraction also failed', {
+                        backend: leadBackend.id,
+                        secondError: toError(secondError),
+                    });
+                    throw firstError;
+                }
+            }
+
+            aggregatedFindings = aggregated!.findings;
             logger.info('Agent review aggregation completed', {
                 backend: leadBackend.id,
-                finalFindingCount: aggregated.findings.length,
+                finalFindingCount: aggregated!.findings.length,
             });
         } catch (error) {
             usedFallbackAggregation = true;
@@ -606,8 +643,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
 
     private async checkBackendAvailable(id: AgentBackendId, config: AgentBackendConfig): Promise<boolean> {
         try {
-            const versionCommand = `${config.binaryPath} --version`;
-            await this.execAsync(versionCommand, {
+            await this.execFileAsync(config.binaryPath, ['--version'], {
                 maxBuffer: 1024 * 1024,
                 env: this.buildExecEnv(id),
             });
@@ -666,10 +702,15 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 diagnostics,
             });
 
-            // Auth and network failures are transient — do not cache so the next
-            // scan attempt re-probes (e.g. user ran `backbrain.loginGemini` and
-            // retries without reloading the window).
-            const isTransient = diagnostics.category === 'auth' || diagnostics.category === 'network';
+            // Auth, network, and unknown failures are transient — do not cache so
+            // the next scan attempt re-probes. The binary-not-found case is handled
+            // above and exits early, so 'unknown' here means an unclassified probe
+            // error (e.g. timeout, unexpected output) that may not persist.
+            const isTransient = (
+                diagnostics.category === 'auth' ||
+                diagnostics.category === 'network' ||
+                diagnostics.category === 'unknown'
+            );
             const state: BackendReadinessState = { ready: false, diagnostics };
             if (!isTransient) {
                 this.readinessCache.set(id, state);
@@ -712,25 +753,19 @@ export class CliAgentReviewScanner implements SecurityScanner {
         // extractJson. A clean process exit (no thrown error) is the only reliable
         // signal that Gemini is authenticated and reachable. We return the canonical
         // sentinel ourselves so checkBackendReady's extractJson call always succeeds.
-        const command = `${backend.config.binaryPath} --approval-mode plan --output-format json -p ${JSON.stringify('Return ONLY this exact JSON: {"ready":true}')}`;
-
-        try {
-            await this.execAsync(command, {
+        // Using execFile avoids /bin/sh entirely so shell metacharacters in the prompt
+        // are never interpreted.
+        await this.execFileAsync(
+            backend.config.binaryPath,
+            ['--approval-mode', 'plan', '--output-format', 'json', '-p', 'Return ONLY this exact JSON: {"ready":true}'],
+            {
                 cwd,
                 maxBuffer: 10 * 1024 * 1024,
                 env: this.buildExecEnv(backend.id),
-                timeout: 15000,
-            });
-            // Clean exit — Gemini is authenticated and reachable.
-            // Return the sentinel directly; checkBackendReady's extractJson
-            // will resolve this to { ready: true } without needing to parse
-            // Gemini's actual output (which varies by version and may include
-            // prose, streaming tokens, or envelope JSON that breaks extraction).
-            return '{"ready":true}';
-        } catch (error) {
-            // Non-zero exit — let checkBackendReady classify the failure.
-            throw error;
-        }
+                timeout: 60000,
+            },
+        );
+        return '{"ready":true}';
     }
 
     private async runBackend(
@@ -739,14 +774,14 @@ export class CliAgentReviewScanner implements SecurityScanner {
         cwd: string,
         options: BackendExecutionOptions = {},
     ): Promise<string> {
-        const command = this.buildBackendCommand(backend, prompt);
+        const { binary, args } = this.buildBackendArgs(backend, prompt);
 
         try {
-            const { stdout } = await this.execAsync(command, {
+            const { stdout } = await this.execFileAsync(binary, args, {
                 cwd,
                 maxBuffer: 20 * 1024 * 1024,
                 env: this.buildExecEnv(backend.id),
-                timeout: options.isReadinessProbe ? 15000 : undefined,
+                timeout: options.isReadinessProbe ? 60000 : undefined,
             });
             return this.normalizeBackendOutput(backend.id, stdout, options);
         } catch (error) {
@@ -761,21 +796,37 @@ export class CliAgentReviewScanner implements SecurityScanner {
         }
     }
 
-    private buildBackendCommand(
+    /**
+     * Build the binary path and explicit args array for a backend call.
+     * Returns {binary, args} so execFile can spawn the process directly
+     * without going through a shell — preventing shell metacharacters in
+     * prompts (backticks, semicolons, $(...)) from being interpreted.
+     */
+    private buildBackendArgs(
         backend: { id: AgentBackendId; config: AgentBackendConfig },
         prompt: string,
-    ): string {
-        const quotedPrompt = JSON.stringify(this.buildBackendPrompt(backend.id, prompt));
+    ): { binary: string; args: string[] } {
+        const builtPrompt = this.buildBackendPrompt(backend.id, prompt);
 
         switch (backend.id) {
             case 'codex': {
-                const modelFlag = backend.config.model ? ` --model ${JSON.stringify(backend.config.model)}` : '';
-                return `${backend.config.binaryPath} exec --sandbox read-only --skip-git-repo-check${modelFlag} ${quotedPrompt}`;
+                const args = ['exec', '--sandbox', 'read-only', '--skip-git-repo-check'];
+                if (backend.config.model) {
+                    args.push('--model', backend.config.model);
+                }
+                args.push(builtPrompt);
+                return { binary: backend.config.binaryPath, args };
             }
             case 'gemini':
-                return `${backend.config.binaryPath} --approval-mode plan --output-format json -p ${quotedPrompt}`;
+                return {
+                    binary: backend.config.binaryPath,
+                    args: ['--approval-mode', 'plan', '--output-format', 'json', '-p', builtPrompt],
+                };
             case 'opencode':
-                return `${backend.config.binaryPath} run --print-logs --format json ${quotedPrompt}`;
+                return {
+                    binary: backend.config.binaryPath,
+                    args: ['run', '--print-logs', '--format', 'json', builtPrompt],
+                };
         }
     }
 
@@ -851,6 +902,112 @@ export class CliAgentReviewScanner implements SecurityScanner {
         }
     }
 
+    /**
+     * More aggressive JSON extraction for the aggregator output.
+     *
+     * `extractJson` already handles plain JSON, fenced JSON, and brace-extraction.
+     * This helper goes further: it strips markdown fences without a language tag,
+     * searches for the `"findings"` key to locate the correct outer object boundary,
+     * and handles cases where Gemini prefixes the JSON with prose.
+     */
+    private extractJsonAggressive(raw: string): unknown {
+        const text = raw.trim();
+
+        // Strategy 1: markdown fence with or without language tag.
+        const fenced = text.match(/```(?:\w+)?\s*([\s\S]*?)```/i);
+        if (fenced?.[1]) {
+            const inner = fenced[1].trim();
+            try { return JSON.parse(inner); } catch { /* fall through */ }
+            const fb = inner.indexOf('{');
+            const lb = inner.lastIndexOf('}');
+            if (fb >= 0 && lb > fb) {
+                try { return JSON.parse(inner.slice(fb, lb + 1)); } catch { /* fall through */ }
+            }
+        }
+
+        // Strategy 2: locate the outer object by finding the `"findings"` key and
+        // walking back to the enclosing `{`.
+        const findingsIdx = text.indexOf('"findings"');
+        if (findingsIdx >= 0) {
+            const openBrace = text.lastIndexOf('{', findingsIdx);
+            const closeBrace = text.lastIndexOf('}');
+            if (openBrace >= 0 && closeBrace > openBrace) {
+                try { return JSON.parse(text.slice(openBrace, closeBrace + 1)); } catch { /* fall through */ }
+            }
+        }
+
+        throw new Error('extractJsonAggressive: no valid aggregator JSON found in output');
+    }
+
+    /**
+     * Normalise a raw aggregator payload so it survives Zod validation.
+     *
+     * Gemini occasionally returns:
+     *   - severity / confidence values in UPPER_CASE or with minor variations
+     *   - line numbers of 0 or negative (invalid for Zod's `.positive()`)
+     *   - non-array values for array fields
+     *
+     * This method mutates-then-returns the object so the Zod parse that follows
+     * can succeed without schema relaxation.
+     */
+    private normalizeAggregatorFindings(extracted: unknown): unknown {
+        if (!extracted || typeof extracted !== 'object') {
+            return extracted;
+        }
+
+        const obj = extracted as Record<string, unknown>;
+        if (!Array.isArray(obj.findings)) {
+            return extracted;
+        }
+
+        const SEVERITY_MAP: Record<string, string> = {
+            error: 'high', err: 'high',
+            warn: 'medium', warning: 'medium',
+        };
+
+        obj.findings = obj.findings.map((f: unknown) => {
+            if (!f || typeof f !== 'object') return f;
+            const finding = { ...(f as Record<string, unknown>) };
+
+            // severity → lowercase, map known aliases
+            if (typeof finding.severity === 'string') {
+                const lower = finding.severity.toLowerCase();
+                finding.severity = SEVERITY_MAP[lower] ?? lower;
+            }
+
+            // confidence → lowercase
+            if (typeof finding.confidence === 'string') {
+                finding.confidence = finding.confidence.toLowerCase();
+            }
+
+            // line must be a positive integer or absent
+            if (finding.line !== undefined) {
+                const n = Number(finding.line);
+                if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+                    delete finding.line;
+                } else {
+                    finding.line = n;
+                }
+            }
+
+            // sourceRoles → always an array
+            if (!Array.isArray(finding.sourceRoles)) {
+                finding.sourceRoles = finding.sourceRoles
+                    ? [String(finding.sourceRoles)]
+                    : [];
+            }
+
+            // linkedDeterministicFindingIds → always an array
+            if (!Array.isArray(finding.linkedDeterministicFindingIds)) {
+                finding.linkedDeterministicFindingIds = [];
+            }
+
+            return finding;
+        });
+
+        return obj;
+    }
+
     private buildExecEnv(backend: AgentBackendId): NodeJS.ProcessEnv {
         // VS Code's extension host can strip or corrupt HOME, PATH, and XDG_*
         // variables. Gemini CLI (and others) rely on these to locate credentials
@@ -913,10 +1070,10 @@ export class CliAgentReviewScanner implements SecurityScanner {
             };
         }
 
-        if (normalized.includes('dns error') || normalized.includes('operation not permitted') || normalized.includes('unable to connect') || normalized.includes('failed to fetch')) {
+        if (normalized.includes('dns error') || normalized.includes('operation not permitted') || normalized.includes('unable to connect') || normalized.includes('failed to fetch') || normalized.includes('timed out') || normalized.includes('timeout')) {
             return {
                 category: 'network',
-                hint: `${backend} could not reach its backend service or model registry.`,
+                hint: `${backend} could not reach its backend service or model registry (likely a network issue or timeout).`,
             };
         }
 
@@ -984,11 +1141,11 @@ export class CliAgentReviewScanner implements SecurityScanner {
 
     private async detectChangedFiles(repositoryRoot: string): Promise<string[]> {
         try {
-            const { stdout } = await this.execAsync('git diff --name-only HEAD --', {
+            const { stdout } = await this.execFileAsync('git', ['diff', '--name-only', 'HEAD', '--'], {
                 cwd: repositoryRoot,
                 maxBuffer: 1024 * 1024,
             });
-            return stdout.split('\n').map(line => line.trim()).filter(Boolean);
+            return stdout.split('\n').map((line: string) => line.trim()).filter(Boolean);
         } catch {
             return [];
         }

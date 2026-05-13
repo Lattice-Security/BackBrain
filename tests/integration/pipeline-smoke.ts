@@ -104,7 +104,7 @@ async function probeGeminiAuth(): Promise<{ ok: boolean; error?: string }> {
     try {
         const { stdout } = await execAsync(
             `gemini --approval-mode plan --output-format json -p "Return ONLY this exact JSON: {\\"ready\\":true}"`,
-            { env, timeout: 20000, maxBuffer: 5 * 1024 * 1024 }
+            { env, timeout: 60000, maxBuffer: 5 * 1024 * 1024 }
         );
         // Gemini wraps in {"response": "..."} envelope
         let inner = stdout.trim();
