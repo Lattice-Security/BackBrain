@@ -24,8 +24,9 @@ type ExplanationState = {
 
 const App: React.FC = () => {
     // Initialize state from VS Code persistence if available
-    const initialState = vscode.getState() as { issues?: IssueData[] } | undefined;
+    const initialState = vscode.getState() as { issues?: IssueData[], scanDepthTier?: string } | undefined;
     const [issues, setIssues] = useState<IssueData[]>(initialState?.issues || []);
+    const [scanDepthTier, setScanDepthTier] = useState<string>(initialState?.scanDepthTier || 'Developer Scan');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [status, setStatus] = useState<{ level: 'info' | 'warn' | 'error'; message: string } | null>(null);
@@ -35,10 +36,10 @@ const App: React.FC = () => {
     const [activeScannerMode, setActiveScannerMode] = useState<'file' | 'workspace'>('workspace');
     const [explanations, setExplanations] = useState<Record<string, ExplanationState>>({});
 
-    // Persist issues whenever they change
+    // Persist state whenever it changes
     useEffect(() => {
-        vscode.setState({ issues });
-    }, [issues]);
+        vscode.setState({ issues, scanDepthTier });
+    }, [issues, scanDepthTier]);
 
     // Listen for messages from the extension
     useEffect(() => {
@@ -79,6 +80,9 @@ const App: React.FC = () => {
                     break;
                 case 'statusClear':
                     setStatus(null);
+                    break;
+                case 'setScanDepthTier':
+                    setScanDepthTier(message.label);
                     break;
                 case 'fixSuggested':
                     setActiveFix({ issueId: message.issueId, fix: message.fix });
@@ -213,7 +217,18 @@ const App: React.FC = () => {
                         gap: 'var(--bb-spacing-md)',
                         marginBottom: 'var(--bb-spacing-xl)',
                         flexWrap: 'wrap',
+                        alignItems: 'center',
                     }}>
+                        <span style={{
+                            fontSize: 'var(--bb-font-size-sm)',
+                            padding: 'var(--bb-spacing-xs) var(--bb-spacing-md)',
+                            borderRadius: 'var(--bb-border-radius-pill)',
+                            backgroundColor: 'var(--bb-color-background-secondary)',
+                            color: 'var(--bb-color-foreground)',
+                            border: '1px solid var(--bb-color-border)',
+                        }}>
+                            {scanDepthTier}
+                        </span>
                         {severityOrder.map(severity => {
                             const count = counts[severity] || 0;
                             if (count === 0) return null;

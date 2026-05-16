@@ -12,6 +12,8 @@ import {
   OSVScanner,
   VibeCodeScanner,
   CliAgentReviewScanner,
+  type AgentScanDepth,
+  resolveScanDepthConfig,
 } from '@backbrain/core';
 import { registerCommands } from './commands';
 import { VSCodeFileSystem } from './adapters/vscode-filesystem';
@@ -235,8 +237,17 @@ export async function activate(context: vscode.ExtensionContext) {
     const aiReviewEnabled = config.get<boolean>('ai.agentReviewEnabled', false);
     const enabledAgentBackends = config.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']);
     const preferredAgentBackend = config.get<'codex' | 'gemini' | 'opencode'>('ai.agentPreferredBackend', 'codex');
-    const maxAgentSpecialists = config.get<number>('ai.maxAgentSpecialists', 6);
-    const agentSpecialistConcurrency = config.get<number>('ai.agentSpecialistConcurrency', 3);
+    const agentScanDepth = config.get<AgentScanDepth>('ai.agentScanDepth', 'developer');
+    const tierConfig = resolveScanDepthConfig(agentScanDepth);
+
+    const maxAgentSpecialistsInspect = config.inspect<number>('ai.maxAgentSpecialists');
+    const userMaxAgentSpecialists = maxAgentSpecialistsInspect?.globalValue ?? maxAgentSpecialistsInspect?.workspaceValue;
+    const maxAgentSpecialists = userMaxAgentSpecialists ?? tierConfig.maxSpecialists;
+
+    const agentSpecialistConcurrencyInspect = config.inspect<number>('ai.agentSpecialistConcurrency');
+    const userAgentSpecialistConcurrency = agentSpecialistConcurrencyInspect?.globalValue ?? agentSpecialistConcurrencyInspect?.workspaceValue;
+    const agentSpecialistConcurrency = userAgentSpecialistConcurrency ?? tierConfig.concurrency;
+
     const agentReviewScope = config.get<'workspace' | 'changed-files' | 'both'>('ai.agentReviewScope', 'both');
     const agentBinaryPaths = {
       codex: config.get<string>('ai.agentBinaryPathCodex', '').trim(),
@@ -252,8 +263,10 @@ export async function activate(context: vscode.ExtensionContext) {
       enabled: aiReviewEnabled,
       backends: enabledAgentBackends,
       preferredBackend: preferredAgentBackend,
+      scanDepth: agentScanDepth,
       maxSpecialists: maxAgentSpecialists,
       specialistConcurrency: agentSpecialistConcurrency,
+      delayBetweenCallsMs: tierConfig.delayBetweenCallsMs,
       reviewScope: agentReviewScope,
       binaryPathOverrides: Object.fromEntries(
         Object.entries(agentBinaryPaths).map(([key, value]) => [key, Boolean(value)])
@@ -279,6 +292,7 @@ export async function activate(context: vscode.ExtensionContext) {
       scanners.push(new CliAgentReviewScanner({
         maxSpecialists: maxAgentSpecialists,
         specialistConcurrency: agentSpecialistConcurrency,
+        delayBetweenCallsMs: tierConfig.delayBetweenCallsMs,
         reviewScope: agentReviewScope,
         preferredBackend: preferredAgentBackend,
         backends: {
@@ -440,6 +454,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Initialize Severity Panel Provider
     const severityPanelProvider = new SeverityPanelProvider(context.extensionUri, securityService);
+    severityPanelProvider.setScanDepthTier(tierConfig.label);
 
     // Register UI components
     try {

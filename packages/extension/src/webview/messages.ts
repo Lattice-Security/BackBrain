@@ -62,6 +62,7 @@ export type ExtensionMessage =
     | { type: 'scanStatus'; phase: SecurityScanPhase; level: 'info' | 'warn' | 'error'; message: string; backend?: string; scanner?: string; degraded?: boolean }
     | { type: 'statusClear' }
     | { type: 'issuesUpdated'; issues: IssueData[]; batchInfo?: { current: number; total: number } }
+    | { type: 'setScanDepthTier'; label: string }
     | { type: 'explanationStarted'; issueId: string; provider?: string | null }
     | { type: 'explanationChunk'; issueId: string; chunk: string }
     | { type: 'explanationComplete'; issueId: string; content: string; provider?: string | null }

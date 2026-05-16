@@ -15,6 +15,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private _lastScanError: string | null = null;
     private _lastBatchProgress: { current: number; total: number } | null = null;
     private _scanCancelTokenSource?: vscode.CancellationTokenSource;
+    private _scanDepthTierLabel: string = 'Developer Scan';
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
@@ -37,7 +38,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    public updateFileIssues(filePath: string, issues: any[]): void {
+    public updateFileIssues(_filePath: string, issues: any[]): void {
         const issueData: IssueData[] = issues.map(issue => toIssueData(issue));
         this._issues = issueData;
         this._lastScanError = null;
@@ -57,6 +58,11 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     public clearStatus(): void {
         this._statusMessage = null;
         this._postMessage({ type: 'statusClear' });
+    }
+
+    public setScanDepthTier(label: string): void {
+        this._scanDepthTierLabel = label;
+        this._postMessage({ type: 'setScanDepthTier', label });
     }
 
     public updateScanStatus(update: SecurityScanStatusUpdate): void {
@@ -457,6 +463,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     }
 
     private _syncStateToWebview(): void {
+        this._postMessage({ type: 'setScanDepthTier', label: this._scanDepthTierLabel });
         if (this._statusMessage) {
             this._postMessage({ type: 'statusUpdate', ...this._statusMessage });
         }

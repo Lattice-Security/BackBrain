@@ -45,10 +45,27 @@ interface BackendReadinessState {
     };
 }
 
+export type AgentScanDepth = 'developer' | 'team' | 'security' | 'audit';
+
+export function resolveScanDepthConfig(depth: AgentScanDepth): { maxSpecialists: number; concurrency: number; delayBetweenCallsMs: number; label: string } {
+    switch (depth) {
+        case 'audit':
+            return { maxSpecialists: 6, concurrency: 3, delayBetweenCallsMs: 0, label: 'Audit Scan' };
+        case 'security':
+            return { maxSpecialists: 4, concurrency: 2, delayBetweenCallsMs: 1000, label: 'Security Scan' };
+        case 'team':
+            return { maxSpecialists: 3, concurrency: 1, delayBetweenCallsMs: 2000, label: 'Team Scan' };
+        case 'developer':
+        default:
+            return { maxSpecialists: 2, concurrency: 1, delayBetweenCallsMs: 3000, label: 'Developer Scan' };
+    }
+}
+
 export interface CliAgentReviewScannerOptions {
     execFileFn?: typeof execFile;
     maxSpecialists?: number;
     specialistConcurrency?: number;
+    delayBetweenCallsMs?: number;
     reviewScope?: 'workspace' | 'changed-files' | 'both';
     preferredBackend?: AgentBackendId;
     backends?: Partial<Record<AgentBackendId, Partial<AgentBackendConfig>>>;
@@ -111,6 +128,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
     private readonly execFileFn: typeof execFile;
     private readonly maxSpecialists: number;
     private readonly specialistConcurrency: number;
+    private readonly delayBetweenCallsMs: number;
     private readonly reviewScope: 'workspace' | 'changed-files' | 'both';
     private readonly preferredBackend: AgentBackendId | undefined;
     private readonly backends: Record<AgentBackendId, AgentBackendConfig>;
@@ -127,6 +145,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         this.execFileFn = options.execFileFn || execFile;
         this.maxSpecialists = Math.max(1, options.maxSpecialists ?? 6);
         this.specialistConcurrency = Math.max(1, options.specialistConcurrency ?? 3);
+        this.delayBetweenCallsMs = Math.max(0, options.delayBetweenCallsMs ?? 0);
         this.reviewScope = options.reviewScope ?? 'both';
         this.preferredBackend = options.preferredBackend;
         this.onAuthFailure = options.onAuthFailure;
@@ -448,6 +467,9 @@ export class CliAgentReviewScanner implements SecurityScanner {
         const runWorker = async () => {
             while (nextIndex < items.length) {
                 const currentIndex = nextIndex++;
+                if (currentIndex > 0 && this.delayBetweenCallsMs > 0) {
+                    await new Promise(resolve => setTimeout(resolve, this.delayBetweenCallsMs));
+                }
                 results[currentIndex] = await worker(items[currentIndex]!, currentIndex);
             }
         };
