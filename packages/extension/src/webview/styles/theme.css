@@ -123,3 +123,100 @@ body {
 .container {
     padding: var(--bb-spacing-xl);
 }
+
+/* ============================================================
+ * Panel Header
+ * ============================================================ */
+.bb-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--bb-spacing-md) var(--bb-spacing-xl);
+    background-color: var(--bb-color-background-secondary);
+    border-bottom: 1px solid var(--bb-color-border);
+    gap: var(--bb-spacing-md);
+}
+
+.bb-panel-header__brand {
+    display: flex;
+    align-items: center;
+    gap: var(--bb-spacing-sm);
+}
+
+.bb-panel-header__shield {
+    color: var(--bb-color-link);
+    flex-shrink: 0;
+}
+
+.bb-panel-header__title {
+    font-size: 13px;
+    font-weight: var(--bb-font-weight-medium);
+    color: var(--bb-color-foreground);
+    letter-spacing: 0.01em;
+}
+
+.bb-panel-header__actions {
+    display: flex;
+    align-items: center;
+    gap: var(--bb-spacing-xs);
+}
+
+/* Ghost Buttons */
+.bb-ghost-btn {
+    font-size: 11px;
+    padding: 3px var(--bb-spacing-md);
+    background: transparent;
+    color: var(--bb-color-foreground-muted);
+    border: 0.5px solid var(--bb-color-border);
+    border-radius: var(--bb-border-radius-sm);
+    cursor: pointer;
+    transition: color var(--bb-transition-fast), border-color var(--bb-transition-fast), background-color var(--bb-transition-fast);
+}
+
+.bb-ghost-btn:hover {
+    color: var(--bb-color-foreground);
+    border-color: var(--bb-color-border-active);
+}
+
+.bb-ghost-btn--active {
+    color: var(--bb-color-link);
+    border-color: var(--bb-color-link);
+}
+
+.bb-ghost-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ============================================================
+ * Scan Depth Row
+ * ============================================================ */
+.bb-depth-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--bb-spacing-xs) var(--bb-spacing-xl);
+    background-color: var(--bb-color-background-secondary);
+    border-bottom: 1px solid var(--bb-color-border);
+}
+
+.bb-depth-row__label {
+    font-size: 11px;
+    color: var(--bb-color-foreground-muted);
+}
+
+.bb-depth-row__badge {
+    font-size: 11px;
+    font-weight: var(--bb-font-weight-medium);
+    color: var(--bb-color-link);
+    background-color: color-mix(in srgb, var(--bb-color-link) 15%, var(--bb-color-background));
+    padding: 2px var(--bb-spacing-md);
+    border-radius: var(--bb-border-radius-pill);
+}
+
+/* ============================================================
+ * Panel Body
+ * ============================================================ */
+.bb-panel-body {
+    padding: var(--bb-spacing-lg) var(--bb-spacing-xl);
+}

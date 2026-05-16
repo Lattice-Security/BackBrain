@@ -1,33 +1,19 @@
 @keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(4px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 
 .issue-list {
     animation: fadeIn var(--bb-transition-normal) ease-out;
 }
 
-.issue-list-loading,
+/* ============================================================
+ * Empty & fallback states
+ * ============================================================ */
 .issue-list-empty {
     text-align: center;
     padding: var(--bb-spacing-xxl) var(--bb-spacing-xl);
     color: var(--bb-color-foreground-muted);
-}
-
-.issue-list-loading vscode-progress-ring {
-    display: block;
-    margin: 0 auto;
-}
-
-.issue-list-loading-text {
-    margin-top: var(--bb-spacing-lg);
 }
 
 .issue-list-empty-title {
@@ -43,39 +29,42 @@
     opacity: 0.8;
 }
 
+/* ============================================================
+ * Controls Row
+ * ============================================================ */
 .issue-list-controls {
     display: flex;
-    justify-content: flex-end;
     align-items: center;
-    gap: var(--bb-spacing-md);
+    gap: var(--bb-spacing-sm);
     margin-bottom: var(--bb-spacing-lg);
-    padding-bottom: var(--bb-spacing-sm);
+    padding: var(--bb-spacing-sm) 0;
     border-bottom: 1px solid var(--bb-color-border);
     flex-wrap: wrap;
 }
 
 .issue-list-controls label {
-    font-size: var(--bb-font-size-xs);
+    font-size: 11px;
     color: var(--bb-color-foreground-muted);
-    text-transform: uppercase;
-    font-weight: var(--bb-font-weight-semibold);
 }
 
-.issue-list-sort-select {
+.issue-list-select {
     background-color: var(--bb-color-background-secondary);
     color: var(--bb-color-foreground);
     border: 1px solid var(--bb-color-border);
     border-radius: var(--bb-border-radius-sm);
     padding: 2px var(--bb-spacing-sm);
-    font-size: var(--bb-font-size-sm);
+    font-size: 11px;
     outline: none;
     cursor: pointer;
 }
 
-.issue-list-sort-select:focus {
+.issue-list-select:focus {
     border-color: var(--bb-color-border-active);
 }
 
+/* ============================================================
+ * File Group
+ * ============================================================ */
 .file-group {
     margin-bottom: var(--bb-spacing-xl);
 }
@@ -84,63 +73,180 @@
     position: sticky;
     top: 0;
     z-index: 10;
-    background-color: var(--vscode-editor-background, var(--bb-color-background));
-    font-size: var(--bb-font-size-sm);
-    font-weight: var(--bb-font-weight-semibold);
-    color: var(--bb-color-foreground);
-    padding: var(--bb-spacing-sm) 0;
-    margin-bottom: var(--bb-spacing-sm);
-    border-bottom: 1px solid var(--bb-color-border);
+    background-color: var(--bb-color-background-secondary);
+    font-size: 11px;
+    font-weight: var(--bb-font-weight-medium);
+    color: var(--bb-color-foreground-muted);
+    padding: var(--bb-spacing-xs) var(--bb-spacing-md);
+    margin-bottom: 2px;
     display: flex;
     align-items: center;
     gap: var(--bb-spacing-sm);
-    flex-wrap: wrap;
+    border-radius: var(--bb-border-radius-sm);
 }
 
 .file-badge {
     margin-left: auto;
-    opacity: 0.7;
-    background-color: var(--bb-color-badge-bg);
-    color: var(--bb-color-badge-fg);
+    background-color: var(--bb-color-background-secondary);
+    color: var(--bb-color-foreground-muted);
     padding: 1px var(--bb-spacing-sm);
     border-radius: var(--bb-border-radius-pill);
-    font-size: var(--bb-font-size-xs);
+    font-size: 10px;
+    border: 1px solid var(--bb-color-border);
 }
 
 /* ============================================================
- * Scan Progress Bar
+ * Scan Progress Section
  * ============================================================ */
 .scan-progress {
-    padding: var(--bb-spacing-xxl) var(--bb-spacing-xl);
+    padding: var(--bb-spacing-xl) 0;
     display: flex;
     flex-direction: column;
     gap: var(--bb-spacing-md);
 }
 
+.scan-progress--fallback {
+    align-items: center;
+    text-align: center;
+    padding: var(--bb-spacing-xxl) var(--bb-spacing-xl);
+}
+
+.scan-progress__spinner {
+    margin-bottom: var(--bb-spacing-md);
+}
+
 .scan-progress__phase-label {
-    font-size: var(--bb-font-size-sm);
+    font-size: 12px;
     font-weight: var(--bb-font-weight-medium);
     color: var(--bb-color-foreground);
 }
 
+.scan-progress__sub-label {
+    font-size: 11px;
+    color: var(--bb-color-foreground-muted);
+}
+
+/* Progress bar */
 .scan-progress__track {
     width: 100%;
-    height: 4px;
-    background-color: var(--bb-color-border);
-    border-radius: var(--bb-border-radius-pill);
+    height: 5px;
+    background-color: var(--bb-color-background-secondary);
+    border-radius: 99px;
     overflow: hidden;
 }
 
 .scan-progress__bar {
     height: 100%;
-    background-color: var(--bb-color-border-active);
-    border-radius: var(--bb-border-radius-pill);
+    background-color: var(--bb-color-link);
+    border-radius: 99px;
     transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-    min-width: 4px;
+    min-width: 5px;
 }
 
-.scan-progress__sub {
-    font-size: var(--bb-font-size-xs);
+/* Phase dots row */
+.scan-progress__dots {
+    display: flex;
+    gap: 4px;
+    width: 100%;
+}
+
+.scan-progress__dot {
+    flex: 1;
+    height: 3px;
+    border-radius: 99px;
+    transition: background-color var(--bb-transition-slow);
+}
+
+.scan-progress__dot--done {
+    background-color: var(--bb-color-link);
+}
+
+.scan-progress__dot--active {
+    background-color: color-mix(in srgb, var(--bb-color-link) 40%, var(--bb-color-background));
+}
+
+.scan-progress__dot--future {
+    background-color: var(--bb-color-background-secondary);
+}
+
+/* Phase labels row */
+.scan-progress__dot-labels {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.scan-progress__dot-label {
+    font-size: 10px;
     color: var(--bb-color-foreground-muted);
-    min-height: 14px;
+    flex: 1;
+    text-align: center;
+}
+
+.scan-progress__dot-label:first-child { text-align: left; }
+.scan-progress__dot-label:last-child  { text-align: right; }
+
+.scan-progress__dot-label--active {
+    color: var(--bb-color-link);
+}
+
+/* Pending message */
+.scan-progress__pending-msg {
+    font-size: 12px;
+    color: var(--bb-color-foreground-muted);
+    text-align: center;
+    padding: var(--bb-spacing-lg) 0 var(--bb-spacing-sm);
+}
+
+/* ============================================================
+ * Summary Bar
+ * ============================================================ */
+.summary-bar {
+    margin-bottom: var(--bb-spacing-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--bb-spacing-sm);
+}
+
+.summary-bar__badges {
+    display: flex;
+    gap: var(--bb-spacing-sm);
+    flex-wrap: wrap;
+}
+
+.summary-badge {
+    font-size: 11px;
+    font-weight: var(--bb-font-weight-medium);
+    padding: 2px var(--bb-spacing-md);
+    border-radius: var(--bb-border-radius-pill);
+    white-space: nowrap;
+}
+
+/* Dark mode badge colors */
+.summary-badge--critical { background: #3d1515; color: #f14c4c; }
+.summary-badge--high     { background: #3d2a0a; color: #cca700; }
+.summary-badge--medium   { background: #3d2a0a; color: #cca700; }
+.summary-badge--low      { background: #0d2a45; color: #3794ff; }
+
+/* Light mode badge colors */
+.vscode-light .summary-badge--critical { background: #FCEBEB; color: #A32D2D; }
+.vscode-light .summary-badge--high     { background: #FAEEDA; color: #854F0B; }
+.vscode-light .summary-badge--medium   { background: #FAEEDA; color: #633806; }
+.vscode-light .summary-badge--low      { background: #E6F1FB; color: #185FA5; }
+
+/* ============================================================
+ * Risk Bar
+ * ============================================================ */
+.risk-bar {
+    display: flex;
+    height: 5px;
+    border-radius: 99px;
+    overflow: hidden;
+    gap: 1px;
+}
+
+.risk-bar__segment {
+    height: 100%;
+    min-width: 4px;
+    transition: flex var(--bb-transition-slow);
 }

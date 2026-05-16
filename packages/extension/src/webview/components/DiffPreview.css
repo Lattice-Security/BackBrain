@@ -142,7 +142,7 @@
 }
 
 .diff-preview__button--cancel {
-    background-color: var(--vscode-button-secondaryBackground, #3a3d41);
+    background-color: var(--bb-color-background-active);
     color: var(--bb-color-foreground);
 }
 

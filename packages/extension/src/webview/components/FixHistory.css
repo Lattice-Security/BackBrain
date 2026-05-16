@@ -79,7 +79,7 @@
     padding: 2px 8px;
     border: none;
     border-radius: var(--border-radius-sm, 4px);
-    background-color: var(--vscode-button-secondaryBackground, #3a3d41);
+    background-color: var(--bb-color-background-active);
     color: var(--bb-color-foreground);
     font-size: var(--font-size-xs, 10px);
     cursor: pointer;
@@ -87,7 +87,7 @@
 }
 
 .fix-history__revert-button:hover {
-    background-color: var(--vscode-button-secondaryHoverBackground, #45494e);
+    background-color: var(--bb-color-background-secondary);
 }
 
 .fix-history__revert-button:disabled {

@@ -1,22 +1,30 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { IssueData, FixData } from '../messages';
 import { vscode } from '../messages';
 import { DiffPreview } from './DiffPreview';
 import './IssueItem.css';
 
-function mapExplanationError(raw: string): string {
-    const lower = raw.toLowerCase();
-    if (lower.includes('auth') || lower.includes('authentication')) {
-        return 'Gemini CLI is not authenticated. Run gemini auth in your terminal then reload VS Code.';
-    }
-    if (lower.includes('rate') || lower.includes('429') || lower.includes('quota')) {
-        return 'Gemini rate limit reached. Wait a moment and try again, or switch to a lower scan depth tier in settings.';
-    }
-    if (lower.includes('network') || lower.includes('econnrefused')) {
-        return 'Cannot reach Gemini. Check your internet connection and try again.';
-    }
-    return `Unexpected error: ${raw}`;
+// ============================================================
+// Helpers
+// ============================================================
+
+function getSourceChipClass(sourceType?: string): string {
+    if (sourceType === 'agent-grounded') return 'source-chip source-chip--grounded';
+    if (sourceType === 'agent-only') return 'source-chip source-chip--ai';
+    if (sourceType === 'deterministic') return 'source-chip source-chip--det';
+    return 'source-chip source-chip--ai';
 }
+
+function getSourceChipLabel(sourceType?: string): string | null {
+    if (sourceType === 'agent-grounded') return 'ai grounded';
+    if (sourceType === 'agent-only') return 'ai review';
+    if (sourceType === 'deterministic') return 'deterministic';
+    return null;
+}
+
+// ============================================================
+// Props
+// ============================================================
 
 interface IssueItemProps {
     issue: IssueData;
@@ -25,8 +33,14 @@ interface IssueItemProps {
     onClearActiveFix: () => void;
 }
 
+// ============================================================
+// Component
+// ============================================================
+
 export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanation, onClearActiveFix }) => {
-    const handleClick = () => {
+    const [expanded, setExpanded] = useState(false);
+
+    const handleCardClick = () => {
         vscode.postMessage({
             type: 'navigateToIssue',
             filePath: issue.filePath,
@@ -35,45 +49,36 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
         });
     };
 
+    const handleChevronClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setExpanded(prev => !prev);
+    };
+
     const handleExplain = (e: React.MouseEvent) => {
-        e.stopPropagation(); // Prevent triggering navigation
-        vscode.postMessage({
-            type: 'explainIssue',
-            issue: issue,
-        });
+        e.stopPropagation();
+        vscode.postMessage({ type: 'explainIssue', issue });
     };
 
     const handleSuggestFix = (e: React.MouseEvent) => {
-        e.stopPropagation(); // Prevent triggering navigation
-        vscode.postMessage({
-            type: 'suggestFix',
-            issue: issue,
-        });
+        e.stopPropagation();
+        vscode.postMessage({ type: 'suggestFix', issue });
+    };
+
+    const handleApplyFix = () => {
+        if (!activeFix) return;
+        vscode.postMessage({ type: 'applyFix', issue, fix: activeFix });
     };
 
     const fileName = issue.filePath.split('/').pop() || issue.filePath;
-    const sourceTypeLabel = issue.sourceType === 'agent-grounded'
-        ? 'ai grounded'
-        : issue.sourceType === 'agent-only'
-            ? 'ai review'
-            : issue.sourceType === 'deterministic'
-                ? 'deterministic'
-                : null;
+    const sourceChipLabel = getSourceChipLabel(issue.sourceType);
+    const sourceChipClass = getSourceChipClass(issue.sourceType);
 
-    // Dynamic severity colors using CSS variables
     const severityStyle = {
         '--severity-color': `var(--bb-severity-${issue.severity})`,
         '--severity-bg': `var(--bb-severity-${issue.severity}-bg)`,
     } as React.CSSProperties;
 
-    const handleApplyFix = () => {
-        if (!activeFix) return;
-        vscode.postMessage({
-            type: 'applyFix',
-            issue: issue,
-            fix: activeFix
-        });
-    };
+    const evidenceText = issue.snippet || issue.description || '';
 
     if (activeFix) {
         return (
@@ -96,55 +101,40 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
     return (
         <div
             className="issue-item"
-            onClick={handleClick}
+            onClick={handleCardClick}
             style={severityStyle}
         >
-            {/* Header: Severity + Title */}
+            {/* ── Top row: severity + source chip + chevron ── */}
             <div className="issue-item-header">
-                <span className="severity-badge">
-                    {issue.severity}
-                </span>
-                <span className="issue-title">
-                    {issue.title}
-                </span>
+                <span className="severity-badge">{issue.severity}</span>
+                {sourceChipLabel && (
+                    <span className={sourceChipClass}>{sourceChipLabel}</span>
+                )}
+                {/* Chevron */}
+                <button
+                    className={`issue-chevron${expanded ? ' issue-chevron--open' : ''}`}
+                    onClick={handleChevronClick}
+                    title={expanded ? 'Collapse evidence' : 'Expand evidence'}
+                    aria-expanded={expanded}
+                >
+                    ›
+                </button>
             </div>
 
-            {/* Description */}
-            <div className="issue-description">
-                {issue.description}
-            </div>
+            {/* ── Title ── */}
+            <div className="issue-title">{issue.title}</div>
 
-            {/* Location */}
+            {/* ── Description ── */}
+            <div className="issue-description">{issue.description}</div>
+
+            {/* ── Location ── */}
             <div className="issue-location">
+                <span className="issue-location__pin">📍</span>
                 <span>{fileName}:{issue.line}</span>
             </div>
 
-            {(issue.source || issue.confidence || issue.verificationStatus || issue.backend || issue.degraded || sourceTypeLabel) && (
-                <div className="issue-meta">
-                    {sourceTypeLabel && (
-                        <span className={`issue-meta__badge issue-meta__badge--${issue.sourceType}`}>
-                            {sourceTypeLabel}
-                        </span>
-                    )}
-                    {issue.source && <span className="issue-meta__badge">{issue.source}</span>}
-                    {issue.confidence && <span className="issue-meta__badge">confidence: {issue.confidence}</span>}
-                    {issue.verificationStatus && issue.verificationStatus !== 'not_applicable' && (
-                        <span className="issue-meta__badge">verification: {issue.verificationStatus}</span>
-                    )}
-                    {issue.backend && <span className="issue-meta__badge">backend: {issue.backend}</span>}
-                    {issue.degraded && <span className="issue-meta__badge">degraded</span>}
-                </div>
-            )}
-
-            {/* Snippet (if available) */}
-            {issue.snippet && (
-                <pre className="issue-snippet">
-                    {issue.snippet}
-                </pre>
-            )}
-
-            {/* AI Actions */}
-            <div className="issue-actions">
+            {/* ── Actions ── */}
+            <div className="issue-actions" onClick={e => e.stopPropagation()}>
                 <button
                     className="action-button action-explain"
                     onClick={handleExplain}
@@ -161,8 +151,23 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
                 </button>
             </div>
 
+            {/* ── Expandable evidence ── */}
+            {expanded && (
+                <div className="issue-evidence" onClick={e => e.stopPropagation()}>
+                    <div className="issue-evidence__label">
+                        <span className="issue-evidence__icon">🔬</span>
+                        Evidence
+                    </div>
+                    <div className="issue-evidence__text">{evidenceText}</div>
+                    {issue.snippet && (
+                        <pre className="issue-evidence__code">{issue.snippet}</pre>
+                    )}
+                </div>
+            )}
+
+            {/* ── AI Explanation panel (when triggered separately) ── */}
             {(explanation?.loading || explanation?.content || explanation?.error) && (
-                <div className="issue-explanation" onClick={(e) => e.stopPropagation()}>
+                <div className="issue-explanation" onClick={e => e.stopPropagation()}>
                     <div className="issue-explanation__header">
                         <span>AI Explanation</span>
                         {explanation?.provider && (
@@ -173,7 +178,7 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
                         <div className="issue-explanation__status">Generating explanation...</div>
                     )}
                     {explanation?.error && (
-                        <div className="issue-explanation__error">{mapExplanationError(explanation.error)}</div>
+                        <div className="issue-explanation__error">{explanation.error}</div>
                     )}
                     {explanation?.content && (
                         <div className="issue-explanation__content">{explanation.content}</div>
