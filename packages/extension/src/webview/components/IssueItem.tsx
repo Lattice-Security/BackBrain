@@ -4,6 +4,20 @@ import { vscode } from '../messages';
 import { DiffPreview } from './DiffPreview';
 import './IssueItem.css';
 
+function mapExplanationError(raw: string): string {
+    const lower = raw.toLowerCase();
+    if (lower.includes('auth') || lower.includes('authentication')) {
+        return 'Gemini CLI is not authenticated. Run gemini auth in your terminal then reload VS Code.';
+    }
+    if (lower.includes('rate') || lower.includes('429') || lower.includes('quota')) {
+        return 'Gemini rate limit reached. Wait a moment and try again, or switch to a lower scan depth tier in settings.';
+    }
+    if (lower.includes('network') || lower.includes('econnrefused')) {
+        return 'Cannot reach Gemini. Check your internet connection and try again.';
+    }
+    return `Unexpected error: ${raw}`;
+}
+
 interface IssueItemProps {
     issue: IssueData;
     activeFix: FixData | null;
@@ -159,7 +173,7 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
                         <div className="issue-explanation__status">Generating explanation...</div>
                     )}
                     {explanation?.error && (
-                        <div className="issue-explanation__error">{explanation.error}</div>
+                        <div className="issue-explanation__error">{mapExplanationError(explanation.error)}</div>
                     )}
                     {explanation?.content && (
                         <div className="issue-explanation__content">{explanation.content}</div>

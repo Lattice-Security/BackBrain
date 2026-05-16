@@ -15,6 +15,20 @@ provideVSCodeDesignSystem().register(vsCodeButton(), vsCodeProgressRing());
 
 const severityOrder = ['critical', 'high', 'medium', 'low', 'info'];
 
+function mapScanError(raw: string): string {
+    const lower = raw.toLowerCase();
+    if (lower.includes('auth') || lower.includes('authentication')) {
+        return 'Gemini CLI is not authenticated. Run gemini auth in your terminal then reload VS Code.';
+    }
+    if (lower.includes('rate') || lower.includes('429') || lower.includes('quota')) {
+        return 'Gemini rate limit reached. Wait a moment and try again, or switch to a lower scan depth tier in settings.';
+    }
+    if (lower.includes('network') || lower.includes('econnrefused')) {
+        return 'Cannot reach Gemini. Check your internet connection and try again.';
+    }
+    return `Unexpected error: ${raw}`;
+}
+
 type ExplanationState = {
     content: string;
     loading: boolean;
@@ -69,7 +83,7 @@ const App: React.FC = () => {
                     }
                     break;
                 case 'scanError':
-                    setError(message.error);
+                    setError(mapScanError(message.error));
                     setLoading(false);
                     break;
                 case 'statusUpdate':
@@ -380,6 +394,8 @@ const App: React.FC = () => {
                     activeFix={activeFix}
                     explanations={explanations}
                     onClearActiveFix={() => setActiveFix(null)}
+                    scanStatus={scanStatus}
+                    batchProgress={batchProgress}
                 />
             </div>
         </ErrorBoundary>

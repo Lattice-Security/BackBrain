@@ -9,6 +9,8 @@ interface IssueListProps {
     activeFix: { issueId: string; fix: FixData } | null;
     explanations: Record<string, { content: string; loading: boolean; error: string | null; provider: string | null }>;
     onClearActiveFix: () => void;
+    scanStatus?: { phase: string; message: string; backend?: string; scanner?: string; level: string } | null;
+    batchProgress?: { current: number; total: number } | null;
 }
 
 type SortMethod = 'severity' | 'filename';
@@ -21,7 +23,78 @@ const severityRank: Record<string, number> = {
     'info': 4,
 };
 
-export const IssueList: React.FC<IssueListProps> = ({ issues, loading, activeFix, explanations, onClearActiveFix }) => {
+const SCAN_PHASES = [
+    'deterministic',
+    'agent-planner',
+    'agent-specialists',
+    'agent-aggregator',
+    'agent-verification',
+    'complete',
+];
+
+const PHASE_LABELS: Record<string, string> = {
+    'deterministic':      'Running deterministic scanners...',
+    'agent-planner':      'AI Planner creating specialists...',
+    'agent-specialists':  'Specialist agents reviewing code...',
+    'agent-aggregator':   'Aggregating findings...',
+    'agent-verification': 'Verifying findings...',
+    'skipped':            'AI review skipped',
+    'degraded':           'Scan completed with warnings',
+    'complete':           'Scan complete',
+};
+
+function getPhaseProgress(phase: string): number {
+    const idx = SCAN_PHASES.indexOf(phase);
+    if (idx === -1) return 10; // unknown phase — show minimal progress
+    return Math.round(((idx + 1) / SCAN_PHASES.length) * 100);
+}
+
+const ScanProgressBar: React.FC<{
+    scanStatus: { phase: string; message: string; backend?: string; scanner?: string } | null;
+    batchProgress: { current: number; total: number } | null;
+}> = ({ scanStatus, batchProgress }) => {
+    if (!scanStatus && !batchProgress) {
+        // Fallback: simple indeterminate state
+        return (
+            <div className="issue-list-loading">
+                <vscode-progress-ring />
+                <div className="issue-list-loading-text">Scanning...</div>
+            </div>
+        );
+    }
+
+    const phase = scanStatus?.phase ?? 'deterministic';
+    const phaseLabel = PHASE_LABELS[phase] ?? scanStatus?.message ?? 'Scanning...';
+    const subLabel = scanStatus?.scanner ?? scanStatus?.backend ?? null;
+    const progress = batchProgress
+        ? Math.round((batchProgress.current / batchProgress.total) * 100)
+        : getPhaseProgress(phase);
+
+    return (
+        <div className="scan-progress">
+            <div className="scan-progress__phase-label">{phaseLabel}</div>
+            <div className="scan-progress__track">
+                <div
+                    className="scan-progress__bar"
+                    style={{ width: `${progress}%` }}
+                    role="progressbar"
+                    aria-valuenow={progress}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                />
+            </div>
+            <div className="scan-progress__sub">
+                {batchProgress
+                    ? `${batchProgress.current} / ${batchProgress.total} files`
+                    : subLabel ?? ''}
+            </div>
+        </div>
+    );
+};
+
+export const IssueList: React.FC<IssueListProps> = ({
+    issues, loading, activeFix, explanations, onClearActiveFix, scanStatus, batchProgress
+}) => {
     const [sortMethod, setSortMethod] = useState<SortMethod>('severity');
 
     const sortedAndGroupedIssues = useMemo(() => {
@@ -61,10 +134,10 @@ export const IssueList: React.FC<IssueListProps> = ({ issues, loading, activeFix
 
     if (loading) {
         return (
-            <div className="issue-list-loading">
-                <vscode-progress-ring />
-                <div className="issue-list-loading-text">Scanning...</div>
-            </div>
+            <ScanProgressBar
+                scanStatus={scanStatus ?? null}
+                batchProgress={batchProgress ?? null}
+            />
         );
     }
 

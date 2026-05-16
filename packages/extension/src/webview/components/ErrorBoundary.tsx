@@ -1,4 +1,5 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
+import './ErrorBoundary.css';
 
 interface Props {
     children: ReactNode;
@@ -27,11 +28,19 @@ export class ErrorBoundary extends Component<Props, State> {
     render() {
         if (this.state.hasError) {
             return this.props.fallback || (
-                <div style={{ padding: '20px', color: 'var(--vscode-errorForeground)' }}>
-                    <h3>Something went wrong</h3>
-                    <p>{this.state.error?.message}</p>
-                    <button onClick={() => this.setState({ hasError: false })}>
-                        Try again
+                <div className="error-boundary">
+                    <div className="error-boundary__title">Something went wrong</div>
+                    <div className="error-boundary__reason">
+                        {this.state.error?.message || 'An unexpected error occurred in the BackBrain panel.'}
+                    </div>
+                    <div className="error-boundary__hint">
+                        This may be caused by a rendering error in the extension UI. Try reloading the panel or the window.
+                    </div>
+                    <button
+                        className="error-boundary__button"
+                        onClick={() => this.setState({ hasError: false })}
+                    >
+                        Try Again
                     </button>
                 </div>
             );
