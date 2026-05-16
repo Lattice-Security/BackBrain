@@ -462,22 +462,25 @@ export class CliAgentReviewScanner implements SecurityScanner {
         worker: (item: TInput, index: number) => Promise<TOutput>,
     ): Promise<TOutput[]> {
         const results = new Array<TOutput>(items.length);
-        let nextIndex = 0;
+        const executing = new Set<Promise<void>>();
 
-        const runWorker = async () => {
-            while (nextIndex < items.length) {
-                const currentIndex = nextIndex++;
-                if (currentIndex > 0 && this.delayBetweenCallsMs > 0) {
-                    await new Promise(resolve => setTimeout(resolve, this.delayBetweenCallsMs));
-                }
-                results[currentIndex] = await worker(items[currentIndex]!, currentIndex);
+        for (let i = 0; i < items.length; i++) {
+            if (i > 0 && this.delayBetweenCallsMs > 0) {
+                await new Promise(resolve => setTimeout(resolve, this.delayBetweenCallsMs));
             }
-        };
 
-        await Promise.all(
-            Array.from({ length: Math.min(concurrency, items.length) }, () => runWorker())
-        );
+            while (executing.size >= concurrency) {
+                await Promise.race(executing);
+            }
 
+            const p = worker(items[i]!, i).then(result => {
+                results[i] = result;
+            });
+            executing.add(p);
+            p.finally(() => executing.delete(p));
+        }
+
+        await Promise.all(executing);
         return results;
     }
 

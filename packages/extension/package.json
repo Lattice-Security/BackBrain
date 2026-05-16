@@ -163,6 +163,12 @@
             "security",
             "audit"
           ],
+          "enumDescriptions": [
+            "Quick feedback during active development. Ensures free tier users don't hit rate limits.",
+            "Pre-commit review before pushing.",
+            "Security-conscious review of sensitive code.",
+            "Full spectrum audit before release or compliance gate."
+          ],
           "default": "developer",
           "description": "Control how thorough the agentic scan is. Higher tiers use more AI calls and take longer."
         },
