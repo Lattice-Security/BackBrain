@@ -32,7 +32,7 @@ export class SemgrepInstaller {
             return `"${filePath.replace(/"/g, '\\"')}"`;
         } else {
             // Unix: Use single quotes and escape single quotes
-            return `'${filePath.replace(/'/g, "'\\''")}' `;
+            return `'${filePath.replace(/'/g, "'\\''")}'`;
         }
     }
 

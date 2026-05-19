@@ -29,41 +29,18 @@ import { GeminiCliInstaller } from './utils/gemini-cli-installer';
 
 const logger = createLogger('Extension');
 
-async function ensureOptionalScannerToolsInstalled(
+type OptionalToolId = 'gitleaks' | 'trivy' | 'osv-scanner';
+
+async function configureInstalledOptionalScannerTools(
   cliInstaller: GitHubCliInstaller,
-  toolBinaryPaths: Partial<Record<'gitleaks' | 'trivy' | 'osv-scanner', string>>,
-  onToolReady: (toolId: 'gitleaks' | 'trivy' | 'osv-scanner', binaryPath: string) => void,
+  onToolReady: (toolId: OptionalToolId, binaryPath: string) => void,
 ): Promise<void> {
   for (const toolId of ['gitleaks', 'trivy', 'osv-scanner'] as const) {
     const isAvailable = await cliInstaller.isAvailable(toolId);
     if (isAvailable) {
-      toolBinaryPaths[toolId] = cliInstaller.getBinaryPath(toolId);
-      onToolReady(toolId, toolBinaryPaths[toolId]!);
-      logger.info(`${cliInstaller.getDisplayName(toolId)} found`, { path: toolBinaryPaths[toolId] });
-      continue;
-    }
-
-    try {
-      await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `Installing ${cliInstaller.getDisplayName(toolId)}...`,
-        cancellable: false,
-      }, async () => {
-        toolBinaryPaths[toolId] = await cliInstaller.install(toolId);
-      });
-      onToolReady(toolId, toolBinaryPaths[toolId]!);
-      vscode.window.showInformationMessage(`${cliInstaller.getDisplayName(toolId)} installed successfully.`);
-    } catch (err) {
-      logger.warn(`Failed to install ${toolId}`, { error: err });
-      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-      vscode.window.showWarningMessage(
-        `BackBrain: Failed to install ${cliInstaller.getDisplayName(toolId)}. ${errorMsg}`,
-        'Manual Install'
-      ).then(choice => {
-        if (choice === 'Manual Install') {
-          vscode.env.openExternal(vscode.Uri.parse(cliInstaller.getDocsUrl(toolId)));
-        }
-      });
+      const binaryPath = cliInstaller.getBinaryPath(toolId);
+      onToolReady(toolId, binaryPath);
+      logger.info(`${cliInstaller.getDisplayName(toolId)} found`, { path: binaryPath });
     }
   }
 }
@@ -223,16 +200,6 @@ export async function activate(context: vscode.ExtensionContext) {
     initializeFixHistoryService(context);
     registerFixPreviewProvider(context);
 
-    // Check Semgrep availability without blocking the rest of activation.
-    let semgrepPath = '';
-    const isSemgrepAvailable = await installer.isAvailable();
-    if (isSemgrepAvailable) {
-      semgrepPath = installer.getSemgrepPath();
-      logger.info('Semgrep found', { path: semgrepPath });
-    }
-
-    const toolBinaryPaths: Partial<Record<'gitleaks' | 'trivy' | 'osv-scanner', string>> = {};
-
     const config = vscode.workspace.getConfiguration('backbrain');
     const aiReviewEnabled = config.get<boolean>('ai.agentReviewEnabled', false);
     const enabledAgentBackends = config.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']);
@@ -344,22 +311,8 @@ export async function activate(context: vscode.ExtensionContext) {
     try {
       scanners.forEach((scanner) => {
         try {
-          // Configure Semgrep scanner if path is available
           if (scanner instanceof SemgrepScanner) {
             semgrepScanners.push(scanner);
-            if (semgrepPath) {
-              scanner.setBinaryPath(semgrepPath);
-            }
-          }
-
-          if (scanner instanceof GitleaksScanner && toolBinaryPaths['gitleaks']) {
-            scanner.setBinaryPath(toolBinaryPaths['gitleaks']);
-          }
-          if (scanner instanceof TrivyScanner && toolBinaryPaths['trivy']) {
-            scanner.setBinaryPath(toolBinaryPaths['trivy']);
-          }
-          if (scanner instanceof OSVScanner && toolBinaryPaths['osv-scanner']) {
-            scanner.setBinaryPath(toolBinaryPaths['osv-scanner']);
           }
 
           // Capture Vibe scanner for rule updates
@@ -382,24 +335,25 @@ export async function activate(context: vscode.ExtensionContext) {
       logger.error('Unexpected error during scanner registration', { error: err });
     }
 
-    const optionalToolInstallPromise = ensureOptionalScannerToolsInstalled(
-      cliInstaller,
-      toolBinaryPaths,
-      (toolId, binaryPath) => {
-        scanners.forEach((scanner) => {
-          if (toolId === 'gitleaks' && scanner instanceof GitleaksScanner) {
-            scanner.setBinaryPath(binaryPath);
-          }
-          if (toolId === 'trivy' && scanner instanceof TrivyScanner) {
-            scanner.setBinaryPath(binaryPath);
-          }
-          if (toolId === 'osv-scanner' && scanner instanceof OSVScanner) {
-            scanner.setBinaryPath(binaryPath);
-          }
-        });
-      },
-    ).catch((error) => {
-      logger.warn('Optional scanner installation flow failed', { error });
+    const scannerToolConfigurationPromise = Promise.all([
+      configureInstalledOptionalScannerTools(
+        cliInstaller,
+        (toolId, binaryPath) => {
+          scanners.forEach((scanner) => {
+            if (toolId === 'gitleaks' && scanner instanceof GitleaksScanner) {
+              scanner.setBinaryPath(binaryPath);
+            }
+            if (toolId === 'trivy' && scanner instanceof TrivyScanner) {
+              scanner.setBinaryPath(binaryPath);
+            }
+            if (toolId === 'osv-scanner' && scanner instanceof OSVScanner) {
+              scanner.setBinaryPath(binaryPath);
+            }
+          });
+        },
+      ),
+    ]).catch((error) => {
+      logger.warn('Optional scanner tool configuration failed', { error });
     });
 
     // Ensure Gemini CLI is installed and authenticated (non-blocking)
@@ -557,11 +511,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
     logger.info('BackBrain extension activated successfully');
 
-    void optionalToolInstallPromise;
+    void scannerToolConfigurationPromise;
     void geminiSetupPromise;
-    if (!isSemgrepAvailable) {
-      void ensureSemgrepInstalled(installer, semgrepScanners, severityPanelProvider);
-    }
+    void ensureSemgrepInstalled(installer, semgrepScanners, severityPanelProvider);
   } catch (error) {
     logger.error('Critical failure during BackBrain activation', { error });
 

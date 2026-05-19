@@ -7,8 +7,8 @@ export async function showSecurityPanelCommand() {
   logger.info('Showing security panel');
 
   try {
-    // TODO: Implement webview panel in Phase 8
-    vscode.window.showInformationMessage('Security Panel (coming soon)');
+    await vscode.commands.executeCommand('workbench.view.extension.backbrain-sidebar');
+    await vscode.commands.executeCommand('backbrain.severityPanel.focus');
   } catch (error) {
     logger.error('Failed to show security panel', { error });
     vscode.window.showErrorMessage(`Failed to open Security Panel: ${error}`);

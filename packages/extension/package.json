@@ -14,7 +14,14 @@
     "Testing"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onView:backbrain.severityPanel",
+    "onCommand:backbrain.scanFile",
+    "onCommand:backbrain.scanWorkspace",
+    "onCommand:backbrain.showSecurityPanel",
+    "onCommand:backbrain.explainIssue",
+    "onCommand:backbrain.suggestFix",
+    "onCommand:backbrain.generateReport",
+    "onCommand:backbrain.setApiKey"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -82,7 +89,7 @@
         },
         "backbrain.scanOnStartup": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Trigger a full workspace scan when the extension activates"
         },
         "backbrain.ai.provider": {
@@ -215,7 +222,7 @@
         {
           "id": "backbrain-sidebar",
           "title": "BackBrain",
-          "icon": "$(shield)"
+          "icon": "media/backbrain.svg"
         }
       ]
     },
