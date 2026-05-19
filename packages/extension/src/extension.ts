@@ -26,43 +26,36 @@ import { registerFixPreviewProvider } from './services/fix-preview-provider';
 
 const logger = createLogger('Extension');
 
-async function ensureOptionalScannerToolsInstalled(
+type OptionalToolId = 'gitleaks' | 'trivy' | 'osv-scanner';
+
+async function configureInstalledOptionalScannerTools(
   cliInstaller: GitHubCliInstaller,
-  toolBinaryPaths: Partial<Record<'gitleaks' | 'trivy' | 'osv-scanner', string>>,
-  onToolReady: (toolId: 'gitleaks' | 'trivy' | 'osv-scanner', binaryPath: string) => void,
+  onToolReady: (toolId: OptionalToolId, binaryPath: string) => void,
 ): Promise<void> {
   for (const toolId of ['gitleaks', 'trivy', 'osv-scanner'] as const) {
     const isAvailable = await cliInstaller.isAvailable(toolId);
     if (isAvailable) {
-      toolBinaryPaths[toolId] = cliInstaller.getBinaryPath(toolId);
-      onToolReady(toolId, toolBinaryPaths[toolId]!);
-      logger.info(`${cliInstaller.getDisplayName(toolId)} found`, { path: toolBinaryPaths[toolId] });
-      continue;
-    }
-
-    try {
-      await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `Installing ${cliInstaller.getDisplayName(toolId)}...`,
-        cancellable: false,
-      }, async () => {
-        toolBinaryPaths[toolId] = await cliInstaller.install(toolId);
-      });
-      onToolReady(toolId, toolBinaryPaths[toolId]!);
-      vscode.window.showInformationMessage(`${cliInstaller.getDisplayName(toolId)} installed successfully.`);
-    } catch (err) {
-      logger.warn(`Failed to install ${toolId}`, { error: err });
-      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-      vscode.window.showWarningMessage(
-        `BackBrain: Failed to install ${cliInstaller.getDisplayName(toolId)}. ${errorMsg}`,
-        'Manual Install'
-      ).then(choice => {
-        if (choice === 'Manual Install') {
-          vscode.env.openExternal(vscode.Uri.parse(cliInstaller.getDocsUrl(toolId)));
-        }
-      });
+      const binaryPath = cliInstaller.getBinaryPath(toolId);
+      onToolReady(toolId, binaryPath);
+      logger.info(`${cliInstaller.getDisplayName(toolId)} found`, { path: binaryPath });
     }
   }
+}
+
+async function configureSemgrepScanner(installer: SemgrepInstaller, scanners: SecurityScanner[]): Promise<void> {
+  const isSemgrepAvailable = await installer.isAvailable();
+  if (!isSemgrepAvailable) {
+    logger.info('Semgrep is not available; Semgrep scanning will stay disabled until it is installed');
+    return;
+  }
+
+  const semgrepPath = installer.getSemgrepPath();
+  scanners.forEach((scanner) => {
+    if (scanner instanceof SemgrepScanner) {
+      scanner.setBinaryPath(semgrepPath);
+    }
+  });
+  logger.info('Semgrep found', { path: semgrepPath });
 }
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -85,48 +78,6 @@ export async function activate(context: vscode.ExtensionContext) {
     // Initialize Fix History Service (Phase 10)
     initializeFixHistoryService(context);
     registerFixPreviewProvider(context);
-
-    // Check Semgrep availability
-    let semgrepPath = '';
-    const isSemgrepAvailable = await installer.isAvailable();
-
-    if (isSemgrepAvailable) {
-      semgrepPath = installer.getSemgrepPath();
-      logger.info('Semgrep found', { path: semgrepPath });
-    } else {
-      // Prompt to install
-      const selection = await vscode.window.showWarningMessage(
-        'BackBrain: Semgrep is missing. Security scanning will be limited.',
-        'Install Semgrep',
-        'Learn More'
-      );
-
-      if (selection === 'Install Semgrep') {
-        await vscode.window.withProgress({
-          location: vscode.ProgressLocation.Notification,
-          title: 'Installing Semgrep...',
-          cancellable: false
-        }, async () => {
-          try {
-            await installer.install();
-            semgrepPath = installer.getSemgrepPath();
-            vscode.window.showInformationMessage('Semgrep installed successfully!');
-          } catch (err) {
-            logger.error('Failed to install Semgrep', { error: err });
-            const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-            vscode.window.showErrorMessage(`BackBrain: ${errorMsg}`, 'Manual Install').then(choice => {
-              if (choice === 'Manual Install') {
-                vscode.env.openExternal(vscode.Uri.parse('https://semgrep.dev/docs/getting-started/'));
-              }
-            });
-          }
-        });
-      } else if (selection === 'Learn More') {
-        vscode.env.openExternal(vscode.Uri.parse('https://semgrep.dev/docs/getting-started/'));
-      }
-    }
-
-    const toolBinaryPaths: Partial<Record<'gitleaks' | 'trivy' | 'osv-scanner', string>> = {};
 
     const config = vscode.workspace.getConfiguration('backbrain');
     const aiReviewEnabled = config.get<boolean>('ai.agentReviewEnabled', false);
@@ -193,21 +144,6 @@ export async function activate(context: vscode.ExtensionContext) {
     try {
       scanners.forEach((scanner) => {
         try {
-          // Configure Semgrep scanner if path is available
-          if (scanner instanceof SemgrepScanner && semgrepPath) {
-            scanner.setBinaryPath(semgrepPath);
-          }
-
-          if (scanner instanceof GitleaksScanner && toolBinaryPaths['gitleaks']) {
-            scanner.setBinaryPath(toolBinaryPaths['gitleaks']);
-          }
-          if (scanner instanceof TrivyScanner && toolBinaryPaths['trivy']) {
-            scanner.setBinaryPath(toolBinaryPaths['trivy']);
-          }
-          if (scanner instanceof OSVScanner && toolBinaryPaths['osv-scanner']) {
-            scanner.setBinaryPath(toolBinaryPaths['osv-scanner']);
-          }
-
           // Capture Vibe scanner for rule updates
           if (scanner instanceof VibeCodeScanner) {
             vibeScanner = scanner;
@@ -228,24 +164,26 @@ export async function activate(context: vscode.ExtensionContext) {
       logger.error('Unexpected error during scanner registration', { error: err });
     }
 
-    const optionalToolInstallPromise = ensureOptionalScannerToolsInstalled(
-      cliInstaller,
-      toolBinaryPaths,
-      (toolId, binaryPath) => {
-        scanners.forEach((scanner) => {
-          if (toolId === 'gitleaks' && scanner instanceof GitleaksScanner) {
-            scanner.setBinaryPath(binaryPath);
-          }
-          if (toolId === 'trivy' && scanner instanceof TrivyScanner) {
-            scanner.setBinaryPath(binaryPath);
-          }
-          if (toolId === 'osv-scanner' && scanner instanceof OSVScanner) {
-            scanner.setBinaryPath(binaryPath);
-          }
-        });
-      },
-    ).catch((error) => {
-      logger.warn('Optional scanner installation flow failed', { error });
+    const scannerToolConfigurationPromise = Promise.all([
+      configureSemgrepScanner(installer, scanners),
+      configureInstalledOptionalScannerTools(
+        cliInstaller,
+        (toolId, binaryPath) => {
+          scanners.forEach((scanner) => {
+            if (toolId === 'gitleaks' && scanner instanceof GitleaksScanner) {
+              scanner.setBinaryPath(binaryPath);
+            }
+            if (toolId === 'trivy' && scanner instanceof TrivyScanner) {
+              scanner.setBinaryPath(binaryPath);
+            }
+            if (toolId === 'osv-scanner' && scanner instanceof OSVScanner) {
+              scanner.setBinaryPath(binaryPath);
+            }
+          });
+        },
+      ),
+    ]).catch((error) => {
+      logger.warn('Optional scanner tool configuration failed', { error });
     });
 
     // Load Vibe rules and setup watcher
@@ -395,7 +333,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     logger.info('BackBrain extension activated successfully');
 
-    void optionalToolInstallPromise;
+    void scannerToolConfigurationPromise;
   } catch (error) {
     logger.error('Critical failure during BackBrain activation', { error });
 
