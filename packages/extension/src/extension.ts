@@ -249,61 +249,58 @@ export async function activate(context: vscode.ExtensionContext) {
     let vibeScanner: VibeCodeScanner | undefined;
     const scanners: SecurityScanner[] = DEFAULT_SCANNERS.map(entry => entry.scanner);
 
-    if (aiReviewEnabled) {
-      logger.info('Registering AI agent review scanner');
+    // Track which backends have already fired a notification this session so
+    // we never spam the user with repeated toasts for the same failure.
+    const authFailureNotified = new Set<string>();
 
-      // Track which backends have already fired a notification this session so
-      // we never spam the user with repeated toasts for the same failure.
-      const authFailureNotified = new Set<string>();
-
-      scanners.push(new CliAgentReviewScanner({
-        maxSpecialists: maxAgentSpecialists,
-        specialistConcurrency: agentSpecialistConcurrency,
-        delayBetweenCallsMs: tierConfig.delayBetweenCallsMs,
-        reviewScope: agentReviewScope,
-        preferredBackend: preferredAgentBackend,
-        backends: {
-          codex: {
-            enabled: enabledAgentBackends.includes('codex'),
-            ...(agentBinaryPaths.codex ? { binaryPath: agentBinaryPaths.codex } : {}),
-            ...(agentModelOverrides.codex ? { model: agentModelOverrides.codex } : {}),
-          },
-          gemini: {
-            enabled: enabledAgentBackends.includes('gemini'),
-            ...(agentBinaryPaths.gemini ? { binaryPath: agentBinaryPaths.gemini } : {}),
-          },
-          opencode: {
-            enabled: enabledAgentBackends.includes('opencode'),
-            ...(agentBinaryPaths.opencode ? { binaryPath: agentBinaryPaths.opencode } : {}),
-          },
+    const agentReviewScanner = new CliAgentReviewScanner({
+      maxSpecialists: maxAgentSpecialists,
+      specialistConcurrency: agentSpecialistConcurrency,
+      delayBetweenCallsMs: tierConfig.delayBetweenCallsMs,
+      reviewScope: agentReviewScope,
+      preferredBackend: preferredAgentBackend,
+      backends: {
+        codex: {
+          enabled: enabledAgentBackends.includes('codex'),
+          ...(agentBinaryPaths.codex ? { binaryPath: agentBinaryPaths.codex } : {}),
+          ...(agentModelOverrides.codex ? { model: agentModelOverrides.codex } : {}),
         },
-        onAuthFailure: (backend) => {
-          // After the user logs in and a new scan runs, the cache is cleared so
-          // the probe fires again. Reset the notification guard at that point so
-          // a subsequent genuine failure is still surfaced.
-          if (authFailureNotified.has(backend)) {
-            return;
+        gemini: {
+          enabled: enabledAgentBackends.includes('gemini'),
+          ...(agentBinaryPaths.gemini ? { binaryPath: agentBinaryPaths.gemini } : {}),
+        },
+        opencode: {
+          enabled: enabledAgentBackends.includes('opencode'),
+          ...(agentBinaryPaths.opencode ? { binaryPath: agentBinaryPaths.opencode } : {}),
+        },
+      },
+      onAuthFailure: (backend) => {
+        // After the user logs in and a new scan runs, the cache is cleared so
+        // the probe fires again. Reset the notification guard at that point so
+        // a subsequent genuine failure is still surfaced.
+        if (authFailureNotified.has(backend)) {
+          return;
+        }
+        authFailureNotified.add(backend);
+        logger.warn('Agent backend authentication failure — surfacing user notification', { backend });
+
+        vscode.window.showErrorMessage(
+          `BackBrain: ${backend} is not authenticated. AI agent review is unavailable until you sign in.`,
+          'Login to Gemini',
+          'Reload Window',
+        ).then(choice => {
+          // After the user takes action, clear the guard so a future failure
+          // (e.g. token expires again) is surfaced properly.
+          authFailureNotified.delete(backend);
+          if (choice === 'Login to Gemini') {
+            void vscode.commands.executeCommand('backbrain.loginGemini');
+          } else if (choice === 'Reload Window') {
+            void vscode.commands.executeCommand('workbench.action.reloadWindow');
           }
-          authFailureNotified.add(backend);
-          logger.warn('Agent backend authentication failure — surfacing user notification', { backend });
-
-          vscode.window.showErrorMessage(
-            `BackBrain: ${backend} is not authenticated. AI agent review is unavailable until you sign in.`,
-            'Login to Gemini',
-            'Reload Window',
-          ).then(choice => {
-            // After the user takes action, clear the guard so a future failure
-            // (e.g. token expires again) is surfaced properly.
-            authFailureNotified.delete(backend);
-            if (choice === 'Login to Gemini') {
-              void vscode.commands.executeCommand('backbrain.loginGemini');
-            } else if (choice === 'Reload Window') {
-              void vscode.commands.executeCommand('workbench.action.reloadWindow');
-            }
-          });
-        },
-      }));
-    }
+        });
+      },
+    });
+    scanners.push(agentReviewScanner);
 
     // Create the Gemini CLI installer instance
     const geminiInstaller = new GeminiCliInstaller();
@@ -409,6 +406,57 @@ export async function activate(context: vscode.ExtensionContext) {
     // Initialize Severity Panel Provider
     const severityPanelProvider = new SeverityPanelProvider(context.extensionUri, securityService);
     severityPanelProvider.setScanDepthTier(tierConfig.label);
+    const applyAgentReviewConfiguration = () => {
+      const latestConfig = vscode.workspace.getConfiguration('backbrain');
+      const latestDepth = latestConfig.get<AgentScanDepth>('ai.agentScanDepth', 'developer');
+      const latestTier = resolveScanDepthConfig(latestDepth);
+      const latestEnabledBackends = latestConfig.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']);
+      const latestPreferredBackend = latestConfig.get<'codex' | 'gemini' | 'opencode'>('ai.agentPreferredBackend', 'codex');
+      const latestReviewScope = latestConfig.get<'workspace' | 'changed-files' | 'both'>('ai.agentReviewScope', 'both');
+      const latestMaxSpecialistsInspect = latestConfig.inspect<number>('ai.maxAgentSpecialists');
+      const latestSpecialistConcurrencyInspect = latestConfig.inspect<number>('ai.agentSpecialistConcurrency');
+      const latestMaxSpecialists = (latestMaxSpecialistsInspect?.globalValue ?? latestMaxSpecialistsInspect?.workspaceValue) ?? latestTier.maxSpecialists;
+      const latestSpecialistConcurrency = (latestSpecialistConcurrencyInspect?.globalValue ?? latestSpecialistConcurrencyInspect?.workspaceValue) ?? latestTier.concurrency;
+      const latestBinaryPaths = {
+        codex: latestConfig.get<string>('ai.agentBinaryPathCodex', '').trim(),
+        gemini: latestConfig.get<string>('ai.agentBinaryPathGemini', '').trim(),
+        opencode: latestConfig.get<string>('ai.agentBinaryPathOpencode', '').trim(),
+      };
+      const latestCodexModel = latestConfig.get<string>('ai.agentCodexModel', '').trim();
+
+      agentReviewScanner.configure({
+        maxSpecialists: latestMaxSpecialists,
+        specialistConcurrency: latestSpecialistConcurrency,
+        delayBetweenCallsMs: latestTier.delayBetweenCallsMs,
+        reviewScope: latestReviewScope,
+        preferredBackend: latestPreferredBackend,
+        backends: {
+          codex: {
+            enabled: latestEnabledBackends.includes('codex'),
+            binaryPath: latestBinaryPaths.codex || 'codex',
+            ...(latestCodexModel ? { model: latestCodexModel } : {}),
+          },
+          gemini: {
+            enabled: latestEnabledBackends.includes('gemini'),
+            binaryPath: latestBinaryPaths.gemini || 'gemini',
+          },
+          opencode: {
+            enabled: latestEnabledBackends.includes('opencode'),
+            binaryPath: latestBinaryPaths.opencode || 'opencode',
+          },
+        },
+      });
+      severityPanelProvider.setScanDepthTier(latestTier.label);
+      void severityPanelProvider.syncConfigurationState();
+    };
+
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration('backbrain.ai') || event.affectsConfiguration('backbrain.enabledScanners')) {
+          applyAgentReviewConfiguration();
+        }
+      })
+    );
 
     // Register UI components
     try {

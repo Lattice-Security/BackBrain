@@ -16,6 +16,18 @@ interface ScanFileOptions {
   quiet?: boolean;
 }
 
+const DEFAULT_ENABLED_SCANNERS = ['semgrep', 'gitleaks', 'trivy', 'osv-scanner', 'vibe-code', 'tree-sitter'];
+
+function getSelectedScannerNames(): string[] {
+  const config = vscode.workspace.getConfiguration('backbrain');
+  const scannerNames = config.get<string[]>('enabledScanners', DEFAULT_ENABLED_SCANNERS);
+  const agentReviewEnabled = config.get<boolean>('ai.agentReviewEnabled', false);
+  const enabledAgentBackends = config.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']);
+  return agentReviewEnabled && enabledAgentBackends.length > 0
+    ? [...scannerNames, 'agent-review']
+    : scannerNames;
+}
+
 const inFlightFileScans = new Map<string, Promise<void>>();
 
 export async function scanFileCommand(ctx: CommandContext, uri?: vscode.Uri, options: ScanFileOptions = {}) {
@@ -46,6 +58,7 @@ export async function scanFileCommand(ctx: CommandContext, uri?: vscode.Uri, opt
     const runScan = async () => {
       const content = await ctx.fileSystem.readFile(filePath);
       const result = await ctx.securityService.scanFile(filePath, content, {
+        scanners: getSelectedScannerNames(),
         onStatus: (update) => ctx.severityPanelProvider.updateScanStatus(update),
       });
 

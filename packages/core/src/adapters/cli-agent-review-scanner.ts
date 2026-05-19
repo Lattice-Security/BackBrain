@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import * as path from 'path';
@@ -62,6 +62,7 @@ export function resolveScanDepthConfig(depth: AgentScanDepth): { maxSpecialists:
 }
 
 export interface CliAgentReviewScannerOptions {
+    execFn?: typeof exec;
     execFileFn?: typeof execFile;
     maxSpecialists?: number;
     specialistConcurrency?: number;
@@ -126,12 +127,13 @@ export class CliAgentReviewScanner implements SecurityScanner {
     readonly name = 'agent-review';
     readonly scanKind = 'agent' as const;
     private readonly execFileFn: typeof execFile;
-    private readonly maxSpecialists: number;
-    private readonly specialistConcurrency: number;
-    private readonly delayBetweenCallsMs: number;
-    private readonly reviewScope: 'workspace' | 'changed-files' | 'both';
-    private readonly preferredBackend: AgentBackendId | undefined;
-    private readonly backends: Record<AgentBackendId, AgentBackendConfig>;
+    private readonly execFn: typeof exec | undefined;
+    private maxSpecialists: number;
+    private specialistConcurrency: number;
+    private delayBetweenCallsMs: number;
+    private reviewScope: 'workspace' | 'changed-files' | 'both';
+    private preferredBackend: AgentBackendId | undefined;
+    private backends: Record<AgentBackendId, AgentBackendConfig>;
     private readonly onAuthFailure: ((backend: AgentBackendId) => void) | undefined;
     /**
      * Readiness cache — only stores outcomes that are stable across a session:
@@ -142,6 +144,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
     private readonly readinessCache = new Map<AgentBackendId, BackendReadinessState>();
 
     constructor(options: CliAgentReviewScannerOptions = {}) {
+        this.execFn = options.execFn;
         this.execFileFn = options.execFileFn || execFile;
         this.maxSpecialists = Math.max(1, options.maxSpecialists ?? 6);
         this.specialistConcurrency = Math.max(1, options.specialistConcurrency ?? 3);
@@ -168,6 +171,41 @@ export class CliAgentReviewScanner implements SecurityScanner {
         };
     }
 
+    configure(options: CliAgentReviewScannerOptions = {}): void {
+        if (options.maxSpecialists !== undefined) {
+            this.maxSpecialists = Math.max(1, options.maxSpecialists);
+        }
+        if (options.specialistConcurrency !== undefined) {
+            this.specialistConcurrency = Math.max(1, options.specialistConcurrency);
+        }
+        if (options.delayBetweenCallsMs !== undefined) {
+            this.delayBetweenCallsMs = Math.max(0, options.delayBetweenCallsMs);
+        }
+        if (options.reviewScope !== undefined) {
+            this.reviewScope = options.reviewScope;
+        }
+        if (options.preferredBackend !== undefined) {
+            this.preferredBackend = options.preferredBackend;
+        }
+        if (options.backends) {
+            this.backends = {
+                codex: {
+                    ...this.backends.codex,
+                    ...options.backends.codex,
+                },
+                gemini: {
+                    ...this.backends.gemini,
+                    ...options.backends.gemini,
+                },
+                opencode: {
+                    ...this.backends.opencode,
+                    ...options.backends.opencode,
+                },
+            };
+            this.readinessCache.clear();
+        }
+    }
+
     /**
      * Spawn a binary with an explicit args array, bypassing the shell entirely.
      * Using execFile instead of exec prevents shell metacharacters in prompts
@@ -178,7 +216,22 @@ export class CliAgentReviewScanner implements SecurityScanner {
         args: string[],
         options: Parameters<typeof execFile>[2],
     ): Promise<{ stdout: string; stderr: string }> {
+        if (this.execFn) {
+            const command = this.buildLegacyShellCommand(binary, args);
+            return promisify(this.execFn)(command, (options ?? {}) as any) as unknown as Promise<{ stdout: string; stderr: string }>;
+        }
         return promisify(this.execFileFn)(binary, args, options ?? {}) as Promise<{ stdout: string; stderr: string }>;
+    }
+
+    private buildLegacyShellCommand(binary: string, args: string[]): string {
+        return [binary, ...args.map((arg, index) => this.quoteLegacyShellArg(arg, args[index - 1]))].join(' ');
+    }
+
+    private quoteLegacyShellArg(arg: string, previousArg?: string): string {
+        if (previousArg === '--model' || /\s/.test(arg)) {
+            return `"${arg.replace(/(["\\$`])/g, '\\$1')}"`;
+        }
+        return arg;
     }
 
     getSupportedExtensions(): string[] {

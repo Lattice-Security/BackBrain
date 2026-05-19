@@ -21,7 +21,9 @@
     "onCommand:backbrain.explainIssue",
     "onCommand:backbrain.suggestFix",
     "onCommand:backbrain.generateReport",
-    "onCommand:backbrain.setApiKey"
+    "onCommand:backbrain.setApiKey",
+    "onCommand:backbrain.loginGemini",
+    "onCommand:backbrain.logoutGemini"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -91,6 +93,29 @@
           "type": "boolean",
           "default": false,
           "description": "Trigger a full workspace scan when the extension activates"
+        },
+        "backbrain.enabledScanners": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "semgrep",
+              "gitleaks",
+              "trivy",
+              "osv-scanner",
+              "vibe-code",
+              "tree-sitter"
+            ]
+          },
+          "default": [
+            "semgrep",
+            "gitleaks",
+            "trivy",
+            "osv-scanner",
+            "vibe-code",
+            "tree-sitter"
+          ],
+          "description": "Deterministic scanners enabled for BackBrain scans"
         },
         "backbrain.ai.provider": {
           "type": "string",

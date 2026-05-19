@@ -37,8 +37,14 @@ export const vscode = getVsCodeApi();
 // ============================================================================
 
 export type WebviewMessage =
-    | { type: 'requestScan' }
+    | { type: 'requestScan'; target?: ScanTarget }
     | { type: 'requestScanFile' }
+    | { type: 'refreshConfiguration' }
+    | { type: 'updateScannerSelection'; scannerId: string; enabled: boolean }
+    | { type: 'updateAgentReviewEnabled'; enabled: boolean }
+    | { type: 'updateAgentBackendSelection'; backendId: AgentBackendId; enabled: boolean }
+    | { type: 'updateAgentPreferredBackend'; backendId: AgentBackendId }
+    | { type: 'updateScanDepth'; depth: AgentScanDepth }
     | { type: 'navigateToIssue'; filePath: string; line: number; column?: number }
     | { type: 'ready' }
     | { type: 'explainIssue'; issue: IssueData }
@@ -61,6 +67,7 @@ export type ExtensionMessage =
     | { type: 'statusUpdate'; level: 'info' | 'warn' | 'error'; message: string }
     | { type: 'scanStatus'; phase: SecurityScanPhase; level: 'info' | 'warn' | 'error'; message: string; backend?: string; scanner?: string; degraded?: boolean }
     | { type: 'statusClear' }
+    | { type: 'configurationState'; state: ConfigurationState }
     | { type: 'issuesUpdated'; issues: IssueData[]; batchInfo?: { current: number; total: number } }
     | { type: 'setScanDepthTier'; label: string }
     | { type: 'explanationStarted'; issueId: string; provider?: string | null }
@@ -73,6 +80,40 @@ export type ExtensionMessage =
     | { type: 'fixHistory'; sessions: FixSessionData[] }
     | { type: 'fixError'; error: string }
     | { type: 'fixSuggested'; issueId: string; fix: FixData };
+
+// ============================================================================
+// Configuration Data
+// ============================================================================
+
+export type ScanTarget = 'file' | 'workspace' | 'changed' | 'custom';
+export type AgentBackendId = 'codex' | 'gemini' | 'opencode';
+export type AgentScanDepth = 'developer' | 'team' | 'security' | 'audit';
+
+export interface ScannerState {
+    id: string;
+    label: string;
+    enabled: boolean;
+    available: boolean;
+    description: string;
+}
+
+export interface AgentBackendState {
+    id: AgentBackendId;
+    label: string;
+    enabled: boolean;
+    available: boolean;
+    authenticated?: boolean;
+    preferred: boolean;
+    description: string;
+}
+
+export interface ConfigurationState {
+    scanners: ScannerState[];
+    agentBackends: AgentBackendState[];
+    agentReviewEnabled: boolean;
+    scanDepth: AgentScanDepth;
+    scanDepthLabel: string;
+}
 
 // ============================================================================
 // Fix Data Types

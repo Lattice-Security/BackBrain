@@ -31,6 +31,13 @@ export interface SecurityScanResult {
     scannersUsed: string[];
 }
 
+export interface ScannerStatus {
+    id: string;
+    available: boolean;
+    scanKind: 'deterministic' | 'agent';
+    supportedExtensions: string[];
+}
+
 function normalizeText(value: string | undefined): string {
     return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -468,8 +475,12 @@ export class SecurityService {
         const deterministicIssues: SecurityIssue[] = [];
         const reportStatus = options.onStatus;
 
-        const deterministicScanners = this.scanners.filter(scanner => scanner.scanKind !== 'agent');
-        const agentScanners = this.scanners.filter(scanner => scanner.scanKind === 'agent');
+        const enabledScannerNames = options.scanners ? new Set(options.scanners) : null;
+        const selectedScanners = enabledScannerNames
+            ? this.scanners.filter(scanner => enabledScannerNames.has(scanner.name))
+            : this.scanners;
+        const deterministicScanners = selectedScanners.filter(scanner => scanner.scanKind !== 'agent');
+        const agentScanners = selectedScanners.filter(scanner => scanner.scanKind === 'agent');
 
         if (deterministicScanners.length > 0) {
             emitStatus(reportStatus, {
@@ -590,5 +601,24 @@ export class SecurityService {
             }
         }
         return Array.from(extensions);
+    }
+
+    async getScannerStatuses(): Promise<ScannerStatus[]> {
+        const statuses: ScannerStatus[] = [];
+        for (const scanner of this.scanners) {
+            let available = false;
+            try {
+                available = await scanner.isAvailable();
+            } catch {
+                available = false;
+            }
+            statuses.push({
+                id: scanner.name,
+                available,
+                scanKind: scanner.scanKind === 'agent' ? 'agent' : 'deterministic',
+                supportedExtensions: scanner.getSupportedExtensions(),
+            });
+        }
+        return statuses;
     }
 }

@@ -1,9 +1,61 @@
 import * as vscode from 'vscode';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { createLogger, type SecurityScanStatusUpdate, type SecurityService } from '@backbrain/core';
-import { type WebviewMessage, type IssueData, type FixData, toIssueData } from '../webview/messages';
+import {
+    type AgentBackendId,
+    type AgentScanDepth,
+    type ConfigurationState,
+    type ScanTarget,
+    type WebviewMessage,
+    type IssueData,
+    type FixData,
+    toIssueData,
+} from '../webview/messages';
 import { getActiveProvider } from '../services/ai-adapter-factory';
+import { GeminiCliInstaller } from '../utils/gemini-cli-installer';
 
 const logger = createLogger('SeverityPanel');
+const execFileAsync = promisify(execFile);
+
+const SCANNER_METADATA: Record<string, { label: string; description: string }> = {
+    semgrep: { label: 'Semgrep', description: 'Static code analysis' },
+    gitleaks: { label: 'Gitleaks', description: 'Secret detection' },
+    trivy: { label: 'Trivy', description: 'Dependencies and IaC' },
+    'osv-scanner': { label: 'OSV', description: 'Open source vulnerabilities' },
+    'vibe-code': { label: 'Vibe Code', description: 'Project rules' },
+    'tree-sitter': { label: 'Tree-sitter', description: 'AST heuristics' },
+};
+
+const DEFAULT_ENABLED_SCANNERS = Object.keys(SCANNER_METADATA);
+
+const AGENT_BACKENDS: Record<AgentBackendId, { label: string; description: string; binarySetting: string; defaultBinary: string }> = {
+    codex: {
+        label: 'Codex',
+        description: 'OpenAI Codex CLI',
+        binarySetting: 'ai.agentBinaryPathCodex',
+        defaultBinary: 'codex',
+    },
+    gemini: {
+        label: 'Gemini',
+        description: 'Google Gemini CLI',
+        binarySetting: 'ai.agentBinaryPathGemini',
+        defaultBinary: 'gemini',
+    },
+    opencode: {
+        label: 'OpenCode',
+        description: 'OpenCode CLI',
+        binarySetting: 'ai.agentBinaryPathOpencode',
+        defaultBinary: 'opencode',
+    },
+};
+
+const SCAN_DEPTH_LABELS: Record<AgentScanDepth, string> = {
+    developer: 'Developer Scan',
+    team: 'Team Scan',
+    security: 'Security Scan',
+    audit: 'Audit Scan',
+};
 
 export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'backbrain.severityPanel';
@@ -70,8 +122,142 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         this._postMessage({ type: 'scanStatus', ...update });
     }
 
+    public async syncConfigurationState(): Promise<void> {
+        this._postMessage({ type: 'configurationState', state: await this._getConfigurationState() });
+    }
+
     public async startWorkspaceScan(): Promise<void> {
         await this._handleScanRequest();
+    }
+
+    private _getEnabledScannerIds(): string[] {
+        const config = vscode.workspace.getConfiguration('backbrain');
+        return config.get<string[]>('enabledScanners', DEFAULT_ENABLED_SCANNERS)
+            .filter(scannerId => scannerId in SCANNER_METADATA);
+    }
+
+    private _getSelectedScannerNames(): string[] {
+        const config = vscode.workspace.getConfiguration('backbrain');
+        const scannerNames = this._getEnabledScannerIds();
+        const agentReviewEnabled = config.get<boolean>('ai.agentReviewEnabled', false);
+        const enabledAgentBackends = config.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']);
+        if (agentReviewEnabled && enabledAgentBackends.length > 0) {
+            scannerNames.push('agent-review');
+        }
+        return scannerNames;
+    }
+
+    private async _getConfigurationState(): Promise<ConfigurationState> {
+        const config = vscode.workspace.getConfiguration('backbrain');
+        const enabledScanners = new Set(this._getEnabledScannerIds());
+        const scannerStatuses = await this._securityService.getScannerStatuses();
+        const statusMap = new Map(scannerStatuses.map(status => [status.id, status]));
+        const scanDepth = config.get<AgentScanDepth>('ai.agentScanDepth', 'developer');
+
+        return {
+            scanners: DEFAULT_ENABLED_SCANNERS.map(scannerId => {
+                const metadata = SCANNER_METADATA[scannerId]!;
+                return {
+                    id: scannerId,
+                    label: metadata.label,
+                    description: metadata.description,
+                    enabled: enabledScanners.has(scannerId),
+                    available: statusMap.get(scannerId)?.available ?? false,
+                };
+            }),
+            agentBackends: await this._getAgentBackendStates(),
+            agentReviewEnabled: config.get<boolean>('ai.agentReviewEnabled', false),
+            scanDepth,
+            scanDepthLabel: SCAN_DEPTH_LABELS[scanDepth],
+        };
+    }
+
+    private async _getAgentBackendStates(): Promise<ConfigurationState['agentBackends']> {
+        const config = vscode.workspace.getConfiguration('backbrain');
+        const enabledBackends = new Set(config.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']));
+        const preferredBackend = config.get<AgentBackendId>('ai.agentPreferredBackend', 'codex');
+
+        return Promise.all((Object.keys(AGENT_BACKENDS) as AgentBackendId[]).map(async (backendId) => {
+            const metadata = AGENT_BACKENDS[backendId];
+            const configuredBinary = config.get<string>(metadata.binarySetting, '').trim();
+            const binaryPath = configuredBinary || metadata.defaultBinary;
+            const availability = await this._checkAgentBackendAvailability(backendId, binaryPath);
+            return {
+                id: backendId,
+                label: metadata.label,
+                description: metadata.description,
+                enabled: enabledBackends.has(backendId),
+                preferred: preferredBackend === backendId,
+                ...availability,
+            };
+        }));
+    }
+
+    private async _checkAgentBackendAvailability(
+        backendId: AgentBackendId,
+        binaryPath: string,
+    ): Promise<{ available: boolean; authenticated?: boolean }> {
+        if (backendId === 'gemini') {
+            const installer = new GeminiCliInstaller();
+            const available = binaryPath === 'gemini'
+                ? await installer.isInstalled()
+                : await this._checkCliAvailable(binaryPath);
+            if (!available) {
+                return { available: false, authenticated: false };
+            }
+            return {
+                available: true,
+                authenticated: await installer.isAuthenticated(),
+            };
+        }
+
+        return { available: await this._checkCliAvailable(binaryPath) };
+    }
+
+    private async _checkCliAvailable(binaryPath: string): Promise<boolean> {
+        try {
+            await execFileAsync(binaryPath, ['--version'], {
+                timeout: 10000,
+                maxBuffer: 1024 * 1024,
+            });
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    private async _updateConfiguration<T>(key: string, value: T): Promise<void> {
+        await vscode.workspace.getConfiguration('backbrain').update(key, value, vscode.ConfigurationTarget.Workspace);
+        await this.syncConfigurationState();
+    }
+
+    private async _handleScannerSelection(scannerId: string, enabled: boolean): Promise<void> {
+        if (!(scannerId in SCANNER_METADATA)) {
+            return;
+        }
+        const enabledScanners = new Set(this._getEnabledScannerIds());
+        if (enabled) {
+            enabledScanners.add(scannerId);
+        } else {
+            enabledScanners.delete(scannerId);
+        }
+        await this._updateConfiguration('enabledScanners', Array.from(enabledScanners));
+    }
+
+    private async _handleAgentBackendSelection(backendId: AgentBackendId, enabled: boolean): Promise<void> {
+        const config = vscode.workspace.getConfiguration('backbrain');
+        const enabledBackends = new Set(config.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']));
+        if (enabled) {
+            enabledBackends.add(backendId);
+        } else {
+            enabledBackends.delete(backendId);
+        }
+
+        if (enabledBackends.size === 0) {
+            await this._updateConfiguration('ai.agentReviewEnabled', false);
+        }
+
+        await this._updateConfiguration('ai.agentBackends', Array.from(enabledBackends));
     }
 
     public async resolveWebviewView(
@@ -112,11 +298,40 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                     break;
 
                 case 'requestScan':
-                    await this._handleScanRequest();
+                    if (message.target === 'file') {
+                        await this._handleScanFileRequest();
+                    } else {
+                        await this._handleScanRequest(message.target ?? 'workspace');
+                    }
                     break;
 
                 case 'requestScanFile':
                     await this._handleScanFileRequest();
+                    break;
+
+                case 'refreshConfiguration':
+                    await this.syncConfigurationState();
+                    break;
+
+                case 'updateScannerSelection':
+                    await this._handleScannerSelection(message.scannerId, message.enabled);
+                    break;
+
+                case 'updateAgentReviewEnabled':
+                    await this._updateConfiguration('ai.agentReviewEnabled', message.enabled);
+                    break;
+
+                case 'updateAgentBackendSelection':
+                    await this._handleAgentBackendSelection(message.backendId, message.enabled);
+                    break;
+
+                case 'updateAgentPreferredBackend':
+                    await this._updateConfiguration('ai.agentPreferredBackend', message.backendId);
+                    break;
+
+                case 'updateScanDepth':
+                    await this._updateConfiguration('ai.agentScanDepth', message.depth);
+                    this.setScanDepthTier(SCAN_DEPTH_LABELS[message.depth]);
                     break;
 
                 case 'navigateToIssue':
@@ -154,7 +369,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     /**
      * Handle scan request from webview
      */
-    private async _handleScanRequest(): Promise<void> {
+    private async _handleScanRequest(target: Exclude<ScanTarget, 'file'> = 'workspace'): Promise<void> {
         if (this._isScanning) {
             // Cancel current scan if it's already running? 
             // For now, just prevent multiple workspace scans.
@@ -168,123 +383,9 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        this._isScanning = true;
-        this._lastScanError = null;
-        this._lastBatchProgress = null;
-        this._scanStatus = null;
-        this._scanCancelTokenSource = new vscode.CancellationTokenSource();
-        const token = this._scanCancelTokenSource.token;
-
-        // Notify webview that scan is starting
-        this._postMessage({ type: 'scanStarted' });
-        logger.info('Starting workspace scan...');
-
         try {
-            // 1. Find all files
-            const extensions = await this._securityService.getSupportedExtensions();
-            const extensionPattern = extensions.map(ext => ext.replace('.', '')).join(',');
-            const globPattern = `**/*.{${extensionPattern}}`;
-
-            const config = vscode.workspace.getConfiguration('backbrain');
-            const defaultExcludes = ['node_modules', 'dist', 'build', '.git', 'out', '.vscode'];
-            const userExcludes = config.get<string[]>('excludePaths', []);
-            const excludePaths = Array.from(new Set([...defaultExcludes, ...userExcludes]));
-
-            // Construct a glob pattern for exclusions
-            const excludeGlob = `**/{${excludePaths.join(',')}}/**`;
-            logger.debug(`Using exclude pattern: ${excludeGlob}`);
-
-            const files = await vscode.workspace.findFiles(
-                globPattern,
-                excludeGlob,
-                5000
-            );
-
-            // 2. Prioritize Strict Order: Active File -> Other Open Files -> Rest of Workspace
-            const activeEditor = vscode.window.activeTextEditor;
-            const activePath = (
-                activeEditor &&
-                !activeEditor.document.isUntitled &&
-                activeEditor.document.uri.scheme === 'file'
-            ) ? activeEditor.document.uri.fsPath : null;
-
-            const openDocuments = vscode.workspace.textDocuments
-                .filter(doc => !doc.isUntitled && doc.uri.scheme === 'file' && doc.uri.fsPath !== activePath)
-                .map(doc => doc.uri.fsPath);
-
-            // Use a Set to track what's already in the queue to avoid duplicates
-            const queuedPaths = new Set<string>();
-            const scanQueue: string[] = [];
-
-            // Phase 1: Active File
-            if (activePath) {
-                scanQueue.push(activePath);
-                queuedPaths.add(activePath);
-            }
-
-            // Phase 2: Other Open Files
-            openDocuments.forEach(path => {
-                if (!queuedPaths.has(path)) {
-                    scanQueue.push(path);
-                    queuedPaths.add(path);
-                }
-            });
-
-            // Phase 3: Rest of Workspace
-            const allFilePaths = files.map(f => f.fsPath);
-            allFilePaths.forEach(path => {
-                if (!queuedPaths.has(path)) {
-                    scanQueue.push(path);
-                    queuedPaths.add(path);
-                }
-            });
-
-            const totalFiles = scanQueue.length;
-            let scannedCount = 0;
-            const batchSize = 50;
-            const startTime = Date.now();
-
-            this._issues = []; // Reset local issue cache for new workspace scan
-
-            logger.info(`Starting prioritized scan: ${scanQueue.length} files (Active: ${activePath ? 1 : 0}, Open: ${openDocuments.length}, Workspace: ${allFilePaths.length - queuedPaths.size + (activePath ? 1 : 0) + openDocuments.length})`);
-
-
-            // 3. Process in batches
-            for (let i = 0; i < totalFiles; i += batchSize) {
-                if (token.isCancellationRequested) break;
-
-                const batch = scanQueue.slice(i, i + batchSize);
-                const batchStartTime = Date.now();
-
-                const results = await this._securityService.scan(batch, {
-                    onStatus: (update) => this.updateScanStatus(update),
-                });
-
-                const newIssues = results.issues.map(toIssueData);
-                this._issues.push(...newIssues);
-
-                scannedCount += batch.length;
-                const batchDuration = Date.now() - batchStartTime;
-
-                logger.debug(`Batch ${Math.floor(i / batchSize) + 1} complete: ${batch.length} files in ${batchDuration}ms`);
-
-                // Update UI incrementally
-                this._postMessage({
-                    type: 'issuesUpdated',
-                    issues: newIssues,
-                    batchInfo: { current: scannedCount, total: totalFiles }
-                });
-                this._lastBatchProgress = { current: scannedCount, total: totalFiles };
-
-                // Yield to keep event loop responsive
-                await new Promise(resolve => setTimeout(resolve, 5));
-            }
-
-            const totalDuration = Date.now() - startTime;
-            logger.info(`Workspace scan complete: ${this._issues.length} issues found in ${totalDuration}ms`);
-            this.setStatus('info', `Workspace scan complete: ${this._issues.length} issue(s) found in ${Math.round(totalDuration / 100) / 10}s.`);
-            this._postMessage({ type: 'scanComplete', issues: this._issues });
-
+            const scanQueue = await this._resolveScanPaths(target);
+            await this._scanPaths(scanQueue, target);
         } catch (error) {
             logger.error('Scan failed', { error });
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -293,16 +394,193 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         } finally {
             this._isScanning = false;
             this._scanCancelTokenSource?.dispose();
-
         }
+    }
+
+    private async _resolveScanPaths(target: Exclude<ScanTarget, 'file'>): Promise<string[]> {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            throw new Error('No workspace folder open');
+        }
+        const root = workspaceFolders[0]!.uri;
+
+        if (target === 'custom') {
+            const selected = await vscode.window.showOpenDialog({
+                canSelectFiles: true,
+                canSelectFolders: true,
+                canSelectMany: true,
+                defaultUri: root,
+                openLabel: 'Scan',
+            });
+            return (selected || []).filter(uri => uri.scheme === 'file').map(uri => uri.fsPath);
+        }
+
+        if (target === 'changed') {
+            try {
+                const { stdout } = await execFileAsync('git', ['diff', '--name-only', 'HEAD'], {
+                    cwd: root.fsPath,
+                    timeout: 10000,
+                    maxBuffer: 1024 * 1024,
+                });
+                return stdout
+                    .split(/\r?\n/)
+                    .map(line => line.trim())
+                    .filter(Boolean)
+                    .map(relativePath => vscode.Uri.joinPath(root, relativePath).fsPath);
+            } catch (error) {
+                logger.warn('Failed to resolve changed files for scan', { error });
+                throw new Error('Could not determine changed files for this workspace.');
+            }
+        }
+
+        // Workspace scan: find all supported files and prioritize active/open files.
+        const extensions = await this._securityService.getSupportedExtensions();
+        const extensionPattern = extensions.map(ext => ext.replace('.', '')).join(',');
+        const globPattern = `**/*.{${extensionPattern}}`;
+
+        const config = vscode.workspace.getConfiguration('backbrain');
+        const defaultExcludes = ['node_modules', 'dist', 'build', '.git', 'out', '.vscode'];
+        const userExcludes = config.get<string[]>('excludePaths', []);
+        const excludePaths = Array.from(new Set([...defaultExcludes, ...userExcludes]));
+        const excludeGlob = `**/{${excludePaths.join(',')}}/**`;
+        logger.debug(`Using exclude pattern: ${excludeGlob}`);
+
+        const files = await vscode.workspace.findFiles(globPattern, excludeGlob, 5000);
+        const activeEditor = vscode.window.activeTextEditor;
+        const activePath = (
+            activeEditor &&
+            !activeEditor.document.isUntitled &&
+            activeEditor.document.uri.scheme === 'file'
+        ) ? activeEditor.document.uri.fsPath : null;
+
+        const openDocuments = vscode.workspace.textDocuments
+            .filter(doc => !doc.isUntitled && doc.uri.scheme === 'file' && doc.uri.fsPath !== activePath)
+            .map(doc => doc.uri.fsPath);
+
+        const queuedPaths = new Set<string>();
+        const scanQueue: string[] = [];
+
+        if (activePath) {
+            scanQueue.push(activePath);
+            queuedPaths.add(activePath);
+        }
+
+        openDocuments.forEach(path => {
+            if (!queuedPaths.has(path)) {
+                scanQueue.push(path);
+                queuedPaths.add(path);
+            }
+        });
+
+        files.map(f => f.fsPath).forEach(path => {
+            if (!queuedPaths.has(path)) {
+                scanQueue.push(path);
+                queuedPaths.add(path);
+            }
+        });
+
+        return scanQueue;
+    }
+
+    private async _scanPaths(scanQueue: string[], target: ScanTarget): Promise<void> {
+        this._isScanning = true;
+        this._lastScanError = null;
+        this._lastBatchProgress = null;
+        this._scanStatus = null;
+        this._scanCancelTokenSource = new vscode.CancellationTokenSource();
+        const token = this._scanCancelTokenSource.token;
+
+        this._postMessage({ type: 'scanStarted' });
+        logger.info('Starting scan', { target, files: scanQueue.length });
+
+        const totalFiles = scanQueue.length;
+        let scannedCount = 0;
+        const batchSize = 50;
+        const startTime = Date.now();
+        const selectedScanners = this._getSelectedScannerNames();
+
+        this._issues = [];
+
+        if (totalFiles === 0) {
+            this.setStatus('info', 'Scan complete: no matching files found.');
+            this._postMessage({ type: 'scanComplete', issues: [] });
+            return;
+        }
+
+        for (let i = 0; i < totalFiles; i += batchSize) {
+            if (token.isCancellationRequested) break;
+
+            const batch = scanQueue.slice(i, i + batchSize);
+            const batchStartTime = Date.now();
+
+            const results = await this._securityService.scan(batch, {
+                scanners: selectedScanners,
+                onStatus: (update) => this.updateScanStatus(update),
+            });
+
+            const newIssues = results.issues.map(toIssueData);
+            this._issues.push(...newIssues);
+
+            scannedCount += batch.length;
+            const batchDuration = Date.now() - batchStartTime;
+
+            logger.debug(`Batch ${Math.floor(i / batchSize) + 1} complete: ${batch.length} files in ${batchDuration}ms`);
+
+            this._postMessage({
+                type: 'issuesUpdated',
+                issues: newIssues,
+                batchInfo: { current: scannedCount, total: totalFiles }
+            });
+            this._lastBatchProgress = { current: scannedCount, total: totalFiles };
+
+            await new Promise(resolve => setTimeout(resolve, 5));
+        }
+
+        const totalDuration = Date.now() - startTime;
+        logger.info('Scan complete', { target, issues: this._issues.length, durationMs: totalDuration });
+        this.setStatus('info', `Scan complete: ${this._issues.length} issue(s) found in ${Math.round(totalDuration / 100) / 10}s.`);
+        this._postMessage({ type: 'scanComplete', issues: this._issues });
     }
 
     /**
      * Handle scan file request from webview
      */
     private async _handleScanFileRequest(): Promise<void> {
-        // Just trigger the command, it handles finding the active editor
-        await vscode.commands.executeCommand('backbrain.scanFile');
+        if (this._isScanning) {
+            logger.warn('Scan already in progress, skipping current-file request');
+            return;
+        }
+
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.uri.scheme !== 'file') {
+            this._postMessage({ type: 'scanError', error: 'No active file selected' });
+            return;
+        }
+
+        this._isScanning = true;
+        this._lastScanError = null;
+        this._lastBatchProgress = null;
+        this._scanStatus = null;
+        this._postMessage({ type: 'scanStarted' });
+
+        try {
+            const filePath = editor.document.uri.fsPath;
+            const content = editor.document.getText();
+            const result = await this._securityService.scanFile(filePath, content, {
+                scanners: this._getSelectedScannerNames(),
+                onStatus: (update) => this.updateScanStatus(update),
+            });
+            const issueData = result.issues.map(toIssueData);
+            this._issues = issueData;
+            this._postMessage({ type: 'scanComplete', issues: issueData });
+        } catch (error) {
+            logger.error('Current file scan failed', { error });
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this._lastScanError = errorMessage;
+            this._postMessage({ type: 'scanError', error: errorMessage });
+        } finally {
+            this._isScanning = false;
+        }
     }
 
     /**
@@ -463,6 +741,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     }
 
     private _syncStateToWebview(): void {
+        void this.syncConfigurationState();
         this._postMessage({ type: 'setScanDepthTier', label: this._scanDepthTierLabel });
         if (this._statusMessage) {
             this._postMessage({ type: 'statusUpdate', ...this._statusMessage });

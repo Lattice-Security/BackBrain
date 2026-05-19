@@ -1,222 +1,593 @@
 :root {
-    /* ============================================================
-     * Typography - normalize across editors
-     * ============================================================ */
-    --bb-font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif);
-    --bb-font-family-mono: var(--vscode-editor-font-family, 'Fira Code', 'Cascadia Code', Consolas, 'Courier New', monospace);
-
+    --bb-font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+    --bb-font-family-mono: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
     --bb-font-size-xs: 10px;
     --bb-font-size-sm: 11px;
     --bb-font-size-base: 13px;
     --bb-font-size-md: 14px;
-    --bb-font-size-lg: 16px;
-
-    --bb-font-weight-normal: 400;
     --bb-font-weight-medium: 500;
     --bb-font-weight-semibold: 600;
-
-    --bb-line-height: 1.4;
-
-    /* ============================================================
-     * Spacing - consistent across editors
-     * ============================================================ */
     --bb-spacing-xs: 4px;
     --bb-spacing-sm: 6px;
     --bb-spacing-md: 8px;
     --bb-spacing-lg: 12px;
     --bb-spacing-xl: 16px;
     --bb-spacing-xxl: 24px;
-
-    --bb-border-radius-sm: 3px;
-    --bb-border-radius-md: 4px;
-    --bb-border-radius-lg: 6px;
-    --bb-border-radius-pill: 12px;
-
-    /* ============================================================
-     * Animation
-     * ============================================================ */
-    --bb-transition-fast: 0.1s ease;
-    --bb-transition-normal: 0.15s ease;
-    --bb-transition-slow: 0.25s ease;
+    --bb-border-radius-sm: var(--bb-radius-sm);
+    --bb-border-radius-md: var(--bb-radius-sm);
+    --bb-border-radius-lg: var(--bb-radius-md);
+    --bb-border-radius-pill: var(--bb-radius-pill);
+    --bb-radius-sm: 4px;
+    --bb-radius-md: 6px;
+    --bb-radius-pill: 999px;
+    --bb-transition-fast: 0.12s ease;
+    --bb-transition-normal: 0.18s ease;
 }
 
-/* ============================================================
- * Mode-Specific Fallbacks (Dark Mode - Default)
- * ============================================================ */
 body,
 .vscode-dark {
-    --bb-color-foreground: var(--vscode-foreground, #cccccc);
-    --bb-color-foreground-muted: var(--vscode-descriptionForeground, #9d9d9d);
+    --bb-color-foreground: var(--vscode-foreground, #d4d4d4);
+    --bb-color-muted: var(--vscode-descriptionForeground, #9d9d9d);
+    --bb-color-subtle: color-mix(in srgb, var(--bb-color-muted) 68%, transparent);
     --bb-color-background: var(--vscode-editor-background, #1e1e1e);
-    --bb-color-background-hover: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.05));
-    --bb-color-background-active: var(--vscode-list-activeSelectionBackground, rgba(255, 255, 255, 0.1));
-    --bb-color-background-secondary: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
+    --bb-color-panel: var(--vscode-sideBar-background, #181818);
+    --bb-color-panel-soft: color-mix(in srgb, var(--vscode-sideBar-background, #181818) 82%, var(--vscode-foreground, #d4d4d4));
+    --bb-color-panel-strong: color-mix(in srgb, var(--vscode-sideBar-background, #181818) 70%, var(--vscode-foreground, #d4d4d4));
+    --bb-color-background-secondary: var(--bb-color-panel-soft);
+    --bb-color-background-hover: var(--bb-color-panel-strong);
+    --bb-color-border-active: var(--bb-color-link);
     --bb-color-border: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
-    --bb-color-border-active: var(--vscode-focusBorder, #007fd4);
     --bb-color-link: var(--vscode-textLink-foreground, #3794ff);
-    --bb-color-badge-bg: var(--vscode-badge-background, #4d4d4d);
-    --bb-color-badge-fg: var(--vscode-badge-foreground, #ffffff);
-
-    /* Severity colors - Dark Mode */
-    --bb-severity-critical: var(--vscode-testing-iconFailed, #f14c4c);
-    --bb-severity-critical-bg: rgba(241, 76, 76, 0.2);
-    --bb-severity-high: var(--vscode-editorError-foreground, #f48771);
-    --bb-severity-high-bg: rgba(244, 135, 113, 0.15);
-    --bb-severity-medium: var(--vscode-editorWarning-foreground, #cca700);
-    --bb-severity-medium-bg: rgba(204, 167, 0, 0.15);
-    --bb-severity-low: var(--vscode-editorInfo-foreground, #3794ff);
-    --bb-severity-low-bg: rgba(55, 148, 255, 0.15);
-    --bb-severity-info: var(--vscode-descriptionForeground, #9d9d9d);
-    --bb-severity-info-bg: rgba(157, 157, 157, 0.12);
-
     --bb-color-success: var(--vscode-testing-iconPassed, #73c991);
+    --bb-color-warning: var(--vscode-editorWarning-foreground, #cca700);
     --bb-color-error: var(--vscode-errorForeground, #f14c4c);
-    --bb-color-error-bg: rgba(241, 76, 76, 0.15);
+    --bb-severity-critical: #f14c4c;
+    --bb-severity-critical-bg: rgba(241, 76, 76, 0.16);
+    --bb-severity-high: #f48771;
+    --bb-severity-high-bg: rgba(244, 135, 113, 0.14);
+    --bb-severity-medium: #cca700;
+    --bb-severity-medium-bg: rgba(204, 167, 0, 0.14);
+    --bb-severity-low: #3794ff;
+    --bb-severity-low-bg: rgba(55, 148, 255, 0.14);
+    --bb-severity-info: var(--bb-color-muted);
+    --bb-severity-info-bg: rgba(157, 157, 157, 0.12);
 }
 
-/* ============================================================
- * Mode-Specific Fallbacks (Light Mode)
- * ============================================================ */
 .vscode-light {
-    --bb-color-foreground: var(--vscode-foreground, #333333);
-    --bb-color-foreground-muted: var(--vscode-descriptionForeground, #717171);
+    --bb-color-foreground: var(--vscode-foreground, #1f1f1f);
+    --bb-color-muted: var(--vscode-descriptionForeground, #646464);
+    --bb-color-subtle: color-mix(in srgb, var(--bb-color-muted) 72%, transparent);
     --bb-color-background: var(--vscode-editor-background, #ffffff);
-    --bb-color-background-hover: var(--vscode-list-hoverBackground, rgba(0, 0, 0, 0.05));
-    --bb-color-background-active: var(--vscode-list-activeSelectionBackground, rgba(0, 0, 0, 0.1));
-    --bb-color-background-secondary: var(--vscode-textBlockQuote-background, rgba(0, 0, 0, 0.05));
-    --bb-color-border: var(--vscode-panel-border, rgba(0, 0, 0, 0.15));
-    --bb-color-border-active: var(--vscode-focusBorder, #007acc);
-    --bb-color-link: var(--vscode-textLink-foreground, #0066cc);
-    --bb-color-badge-bg: var(--vscode-badge-background, #c4c4c4);
-    --bb-color-badge-fg: var(--vscode-badge-foreground, #333333);
-
-    /* Severity colors - Light Mode (High Contrast for WCAG) */
-    --bb-severity-critical: var(--vscode-testing-iconFailed, #cd3131);
-    --bb-severity-critical-bg: rgba(205, 49, 49, 0.12);
-    --bb-severity-high: var(--vscode-editorError-foreground, #e51400);
-    --bb-severity-high-bg: rgba(229, 20, 0, 0.1);
-    --bb-severity-medium: var(--vscode-editorWarning-foreground, #bf8800);
-    --bb-severity-medium-bg: rgba(191, 136, 0, 0.1);
-    --bb-severity-low: var(--vscode-editorInfo-foreground, #1a85ff);
-    --bb-severity-low-bg: rgba(26, 133, 255, 0.1);
-    --bb-severity-info: var(--vscode-descriptionForeground, #717171);
-    --bb-severity-info-bg: rgba(113, 113, 113, 0.08);
-
+    --bb-color-panel: var(--vscode-sideBar-background, #f8f8f8);
+    --bb-color-panel-soft: color-mix(in srgb, var(--vscode-sideBar-background, #f8f8f8) 88%, #000);
+    --bb-color-panel-strong: color-mix(in srgb, var(--vscode-sideBar-background, #f8f8f8) 80%, #000);
+    --bb-color-background-secondary: var(--bb-color-panel-soft);
+    --bb-color-background-hover: var(--bb-color-panel-strong);
+    --bb-color-border-active: var(--bb-color-link);
+    --bb-color-border: var(--vscode-panel-border, rgba(0, 0, 0, 0.16));
+    --bb-color-link: var(--vscode-textLink-foreground, #006ab1);
     --bb-color-success: var(--vscode-testing-iconPassed, #388a34);
+    --bb-color-warning: var(--vscode-editorWarning-foreground, #8a5a00);
     --bb-color-error: var(--vscode-errorForeground, #cd3131);
-    --bb-color-error-bg: rgba(205, 49, 49, 0.1);
+    --bb-severity-critical: #b42318;
+    --bb-severity-critical-bg: #fcebea;
+    --bb-severity-high: #b54708;
+    --bb-severity-high-bg: #fff1db;
+    --bb-severity-medium: #806000;
+    --bb-severity-medium-bg: #fff7cc;
+    --bb-severity-low: #185fa5;
+    --bb-severity-low-bg: #e6f1fb;
+    --bb-severity-info: var(--bb-color-muted);
+    --bb-severity-info-bg: rgba(100, 100, 100, 0.08);
 }
 
-/* ============================================================
- * Base styles for webview
- * ============================================================ */
+* {
+    box-sizing: border-box;
+}
+
 body {
-    font-family: var(--bb-font-family);
-    font-size: var(--bb-font-size-base);
-    line-height: var(--bb-line-height);
-    color: var(--bb-color-foreground);
-    background-color: var(--bb-color-background);
     margin: 0;
     padding: 0;
+    font-family: var(--bb-font-family);
+    font-size: var(--bb-font-size-base);
+    color: var(--bb-color-foreground);
+    background: var(--bb-color-background);
 }
 
-.container {
-    padding: var(--bb-spacing-xl);
+button,
+select,
+input {
+    font: inherit;
 }
 
-/* ============================================================
- * Panel Header
- * ============================================================ */
-.bb-panel-header {
+button {
+    color: inherit;
+}
+
+.bb-shell {
+    min-height: 100vh;
+    background: var(--bb-color-panel);
+}
+
+.bb-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--bb-spacing-md) var(--bb-spacing-xl);
-    background-color: var(--bb-color-background-secondary);
+    gap: 8px;
+    padding: 9px 12px;
+    background: var(--bb-color-panel-soft);
     border-bottom: 1px solid var(--bb-color-border);
-    gap: var(--bb-spacing-md);
 }
 
-.bb-panel-header__brand {
+.bb-brand {
     display: flex;
     align-items: center;
-    gap: var(--bb-spacing-sm);
-}
-
-.bb-panel-header__shield {
-    color: var(--bb-color-link);
-    flex-shrink: 0;
-}
-
-.bb-panel-header__title {
-    font-size: 13px;
+    gap: 7px;
+    min-width: 0;
+    font-size: 12px;
     font-weight: var(--bb-font-weight-medium);
-    color: var(--bb-color-foreground);
-    letter-spacing: 0.01em;
 }
 
-.bb-panel-header__actions {
+.bb-brand-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 17px;
+    height: 17px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--bb-color-link) 22%, var(--bb-color-panel));
+    color: var(--bb-color-link);
+    font-size: 10px;
+    font-weight: var(--bb-font-weight-semibold);
+    flex: 0 0 auto;
+}
+
+.bb-header-actions {
     display: flex;
     align-items: center;
-    gap: var(--bb-spacing-xs);
+    gap: 5px;
 }
 
-/* Ghost Buttons */
-.bb-ghost-btn {
-    font-size: 11px;
-    padding: 3px var(--bb-spacing-md);
+.bb-icon-button,
+.bb-small-button {
+    min-height: 24px;
+    border: 1px solid var(--bb-color-border);
+    border-radius: var(--bb-radius-sm);
     background: transparent;
-    color: var(--bb-color-foreground-muted);
-    border: 0.5px solid var(--bb-color-border);
-    border-radius: var(--bb-border-radius-sm);
+    color: var(--bb-color-muted);
     cursor: pointer;
-    transition: color var(--bb-transition-fast), border-color var(--bb-transition-fast), background-color var(--bb-transition-fast);
 }
 
-.bb-ghost-btn:hover {
+.bb-icon-button {
+    width: 27px;
+}
+
+.bb-small-button {
+    padding: 2px 8px;
+    font-size: 11px;
+}
+
+.bb-icon-button:hover,
+.bb-small-button:hover {
+    background: var(--bb-color-panel-strong);
     color: var(--bb-color-foreground);
-    border-color: var(--bb-color-border-active);
 }
 
-.bb-ghost-btn--active {
+.bb-tab-row {
+    display: flex;
+    background: var(--bb-color-panel-soft);
+    border-bottom: 1px solid var(--bb-color-border);
+}
+
+.bb-tab {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 4px 7px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--bb-color-muted);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: var(--bb-font-weight-medium);
+}
+
+.bb-tab--active {
     color: var(--bb-color-link);
+    background: var(--bb-color-panel);
+    border-bottom-color: var(--bb-color-link);
+}
+
+.bb-view {
+    display: block;
+}
+
+.bb-section {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--bb-color-border);
+}
+
+.bb-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 7px;
+}
+
+.bb-section-title {
+    margin-bottom: 7px;
+    color: var(--bb-color-subtle);
+    font-size: 10px;
+    font-weight: var(--bb-font-weight-semibold);
+    text-transform: uppercase;
+}
+
+.bb-section-header .bb-section-title {
+    margin-bottom: 0;
+}
+
+.bb-card-grid,
+.bb-depth-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.bb-scan-card,
+.bb-depth-card {
+    min-height: 70px;
+    padding: 8px;
+    border: 1px solid var(--bb-color-border);
+    border-radius: var(--bb-radius-md);
+    background: var(--bb-color-panel-soft);
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    transition: border-color var(--bb-transition-fast), background var(--bb-transition-fast);
+}
+
+.bb-depth-card {
+    min-height: 54px;
+}
+
+.bb-scan-card:hover,
+.bb-depth-card:hover {
     border-color: var(--bb-color-link);
 }
 
-.bb-ghost-btn:disabled {
-    opacity: 0.5;
+.bb-scan-card--active,
+.bb-depth-card--active {
+    border-color: var(--bb-color-link);
+    background: color-mix(in srgb, var(--bb-color-link) 13%, var(--bb-color-panel));
+}
+
+.bb-card-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 19px;
+    height: 19px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--bb-color-link) 16%, var(--bb-color-panel));
+    color: var(--bb-color-link);
+    font-size: 10px;
+    font-weight: var(--bb-font-weight-semibold);
+}
+
+.bb-card-label,
+.bb-depth-name,
+.bb-toggle-label {
+    color: var(--bb-color-foreground);
+    font-size: 11px;
+    font-weight: var(--bb-font-weight-medium);
+}
+
+.bb-card-detail,
+.bb-depth-detail,
+.bb-toggle-detail {
+    color: var(--bb-color-muted);
+    font-size: 10px;
+    line-height: 1.35;
+}
+
+.bb-toggle-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.bb-toggle-row {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+    padding: 7px 8px;
+    border: 1px solid var(--bb-color-border);
+    border-radius: var(--bb-radius-md);
+    background: var(--bb-color-panel-soft);
+}
+
+.bb-toggle-row--agent {
+    grid-template-columns: 16px minmax(0, 1fr);
+}
+
+.bb-toggle-row--backend {
+    grid-template-columns: 16px minmax(0, 1fr) auto auto;
+}
+
+.bb-toggle-row--enabled {
+    border-color: color-mix(in srgb, var(--bb-color-link) 45%, var(--bb-color-border));
+}
+
+.bb-toggle-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 2px;
+}
+
+.bb-status-pill,
+.bb-depth-pill {
+    white-space: nowrap;
+    border-radius: var(--bb-radius-pill);
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: var(--bb-font-weight-medium);
+}
+
+.bb-status-pill--ok {
+    color: var(--bb-color-success);
+    background: color-mix(in srgb, var(--bb-color-success) 14%, var(--bb-color-panel));
+}
+
+.bb-status-pill--off {
+    color: var(--bb-color-muted);
+    background: var(--bb-color-panel-strong);
+}
+
+.bb-start-row {
+    padding: 10px 12px;
+}
+
+.bb-start-button {
+    width: 100%;
+    min-height: 32px;
+    border: 0;
+    border-radius: var(--bb-radius-md);
+    background: var(--bb-color-link);
+    color: var(--vscode-button-foreground, #ffffff);
+    font-size: 12px;
+    font-weight: var(--bb-font-weight-medium);
+    cursor: pointer;
+}
+
+.bb-start-button:hover {
+    opacity: 0.9;
+}
+
+.bb-start-button:disabled,
+.bb-scan-card:disabled,
+.bb-depth-card:disabled,
+.bb-preferred-button:disabled {
+    opacity: 0.55;
     cursor: not-allowed;
 }
 
-/* ============================================================
- * Scan Depth Row
- * ============================================================ */
-.bb-depth-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--bb-spacing-xs) var(--bb-spacing-xl);
-    background-color: var(--bb-color-background-secondary);
+.bb-progress-card {
+    padding: 10px 12px;
     border-bottom: 1px solid var(--bb-color-border);
 }
 
-.bb-depth-row__label {
-    font-size: 11px;
-    color: var(--bb-color-foreground-muted);
+.bb-progress-label {
+    margin-bottom: 2px;
+    color: var(--bb-color-foreground);
+    font-size: 12px;
+    font-weight: var(--bb-font-weight-medium);
 }
 
-.bb-depth-row__badge {
+.bb-progress-sub {
+    margin-bottom: 8px;
+    color: var(--bb-color-muted);
+    font-size: 11px;
+}
+
+.bb-progress-track {
+    height: 5px;
+    overflow: hidden;
+    border-radius: var(--bb-radius-pill);
+    background: var(--bb-color-panel-strong);
+}
+
+.bb-progress-fill {
+    height: 100%;
+    min-width: 4px;
+    border-radius: var(--bb-radius-pill);
+    background: var(--bb-color-link);
+    transition: width 0.45s ease;
+}
+
+.bb-phase-row {
+    display: flex;
+    gap: 4px;
+    margin-top: 8px;
+}
+
+.bb-phase {
+    height: 3px;
+    flex: 1;
+    border-radius: var(--bb-radius-pill);
+    background: var(--bb-color-panel-strong);
+}
+
+.bb-phase--done {
+    background: var(--bb-color-link);
+}
+
+.bb-phase--current {
+    outline: 1px solid var(--bb-color-link);
+    background: color-mix(in srgb, var(--bb-color-link) 25%, var(--bb-color-panel));
+}
+
+.bb-error-wrap {
+    padding: 10px 12px 0;
+}
+
+.bb-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--bb-color-border);
+}
+
+.bb-stat-card {
+    min-height: 55px;
+    padding: 8px;
+    border: 1px solid var(--bb-color-border);
+    border-radius: var(--bb-radius-md);
+    background: var(--bb-color-panel-soft);
+    text-align: center;
+}
+
+.bb-stat-num {
+    display: block;
+    font-size: 18px;
+    font-weight: var(--bb-font-weight-semibold);
+}
+
+.bb-stat-num--critical {
+    color: var(--bb-severity-critical);
+}
+
+.bb-stat-num--high {
+    color: var(--bb-severity-high);
+}
+
+.bb-stat-num--low {
+    color: var(--bb-severity-low);
+}
+
+.bb-stat-label {
+    display: block;
+    margin-top: 1px;
+    color: var(--bb-color-muted);
+    font-size: 10px;
+    text-transform: capitalize;
+}
+
+.bb-risk-bar {
+    display: flex;
+    gap: 2px;
+    height: 5px;
+    margin: 8px 12px;
+    overflow: hidden;
+    border-radius: var(--bb-radius-pill);
+    background: var(--bb-color-panel-strong);
+}
+
+.bb-risk-segment--critical {
+    background: var(--bb-severity-critical);
+}
+
+.bb-risk-segment--high {
+    background: var(--bb-severity-high);
+}
+
+.bb-risk-segment--medium {
+    background: var(--bb-severity-medium);
+}
+
+.bb-risk-segment--low {
+    background: var(--bb-severity-low);
+}
+
+.bb-controls-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--bb-color-border);
+}
+
+.bb-select {
+    min-width: 0;
+    max-width: 110px;
+    padding: 3px 6px;
+    border: 1px solid var(--bb-color-border);
+    border-radius: var(--bb-radius-sm);
+    background: var(--bb-color-panel-soft);
+    color: var(--bb-color-foreground);
+    font-size: 11px;
+}
+
+.bb-depth-pill {
+    margin-left: auto;
+    color: var(--bb-color-link);
+    background: color-mix(in srgb, var(--bb-color-link) 14%, var(--bb-color-panel));
+}
+
+.bb-file-group {
+    margin-bottom: 10px;
+}
+
+.bb-file-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--bb-color-border);
+    background: var(--bb-color-panel-soft);
+    color: var(--bb-color-muted);
     font-size: 11px;
     font-weight: var(--bb-font-weight-medium);
-    color: var(--bb-color-link);
-    background-color: color-mix(in srgb, var(--bb-color-link) 15%, var(--bb-color-background));
-    padding: 2px var(--bb-spacing-md);
-    border-radius: var(--bb-border-radius-pill);
 }
 
-/* ============================================================
- * Panel Body
- * ============================================================ */
-.bb-panel-body {
-    padding: var(--bb-spacing-lg) var(--bb-spacing-xl);
+.bb-file-count {
+    margin-left: auto;
+    padding: 1px 6px;
+    border-radius: var(--bb-radius-pill);
+    background: var(--bb-color-panel-strong);
+    color: var(--bb-color-muted);
+    font-size: 10px;
+}
+
+.bb-empty-state {
+    padding: 28px 18px;
+    color: var(--bb-color-muted);
+    text-align: center;
+}
+
+.bb-empty-title {
+    margin-bottom: 6px;
+    color: var(--bb-color-foreground);
+    font-size: 12px;
+    font-weight: var(--bb-font-weight-medium);
+}
+
+.bb-empty-copy {
+    font-size: 11px;
+}
+
+.bb-preferred-button {
+    min-height: 24px;
+    padding: 2px 7px;
+    border: 1px solid var(--bb-color-border);
+    border-radius: var(--bb-radius-pill);
+    background: transparent;
+    color: var(--bb-color-muted);
+    cursor: pointer;
+    font-size: 10px;
+}
+
+.bb-preferred-button--active {
+    color: var(--bb-color-link);
+    border-color: var(--bb-color-link);
+    background: color-mix(in srgb, var(--bb-color-link) 12%, var(--bb-color-panel));
 }
