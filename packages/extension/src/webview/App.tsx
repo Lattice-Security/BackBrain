@@ -90,6 +90,25 @@ const defaultConfiguration: ConfigurationState = {
     scanDepthLabel: 'Developer Scan',
 };
 
+const ALL_SPECIALISTS = [
+    { name: 'AI Orchestration Security', focus: 'prompt injection, sandbox escape' },
+    { name: 'CLI Credential Auditor', focus: 'credential handling, auth flows' },
+    { name: 'System Call Sentinel', focus: 'command injection, subprocess execution' },
+    { name: 'Data Flow Inspector', focus: 'data leakage, logging exposure' },
+    { name: 'Access Control Auditor', focus: 'path traversal, file permissions' },
+    { name: 'Dependency Integrity Agent', focus: 'version safety, library imports' },
+];
+
+const getDepthAgentCount = (depth: AgentScanDepth): number => {
+    switch (depth) {
+        case 'developer': return 2;
+        case 'team': return 3;
+        case 'security': return 4;
+        case 'audit': return 6;
+        default: return 2;
+    }
+};
+
 function basename(filePath: string): string {
     return filePath.split(/[\\/]/).pop() || filePath;
 }
@@ -109,6 +128,7 @@ const App = () => {
     const [selectedTarget, setSelectedTarget] = useState<ScanTarget>('workspace');
     const [sortMethod, setSortMethod] = useState<SortMethod>('severity');
     const [filterMethod, setFilterMethod] = useState<FilterMethod>('all');
+    const [expandedSpec, setExpandedSpec] = useState<Record<string, boolean>>({});
 
     useEffect(() => {
         vscode.setState({ issues, scanDepthTier });
@@ -323,6 +343,76 @@ const App = () => {
                                         />
                                     ))}
                                 </div>
+                                {configuration.agentReviewEnabled && (
+                                    <div style={{ marginTop: '12px', borderTop: '0.5px solid var(--bb-color-border)', paddingTop: '10px' }}>
+                                        <div className="bb-section-title" style={{ padding: 0, marginBottom: '6px', fontSize: '10px' }}>Agent specialists</div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                            {(() => {
+                                                const totalAgents = getDepthAgentCount(configuration.scanDepth);
+                                                const specs = ALL_SPECIALISTS.slice(0, totalAgents);
+                                                
+                                                if (currentPhase === 'deterministic') {
+                                                    return (
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', border: '0.5px solid var(--bb-color-border)', background: 'var(--bb-color-panel-soft)' }}>
+                                                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--bb-color-panel-strong)', flexShrink: 0 }} />
+                                                            <div style={{ fontSize: '11px', color: 'var(--bb-color-muted)', flex: 1 }}>Waiting for AI planner...</div>
+                                                        </div>
+                                                    );
+                                                }
+                                                
+                                                if (currentPhase === 'agent-planner') {
+                                                    return (
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', border: '0.5px solid var(--bb-color-border)', background: 'var(--bb-color-panel-soft)' }}>
+                                                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--bb-color-link)', flexShrink: 0 }} />
+                                                            <div style={{ fontSize: '11px', color: 'var(--bb-color-foreground)', flex: 1 }}>AI Planner creating specialists...</div>
+                                                        </div>
+                                                    );
+                                                }
+
+                                                return specs.map((spec, specIdx) => {
+                                                    let statusColor = 'var(--bb-color-panel-strong)';
+                                                    let statusText = 'waiting';
+                                                    
+                                                    if (currentPhase === 'agent-specialists') {
+                                                        const msg = (scanStatus?.message || '').toLowerCase();
+                                                        if (msg.includes('verifying') || msg.includes('aggregator')) {
+                                                            statusColor = 'var(--bb-color-success)';
+                                                            statusText = 'done';
+                                                        } else {
+                                                            // Dynamically mark earlier specialists as done/running
+                                                            if (specIdx === 0) {
+                                                                statusColor = 'var(--bb-color-link)';
+                                                                statusText = 'running';
+                                                            } else {
+                                                                statusColor = 'var(--bb-color-panel-strong)';
+                                                                statusText = 'waiting';
+                                                            }
+                                                        }
+                                                    } else {
+                                                        statusColor = 'var(--bb-color-success)';
+                                                        statusText = 'done';
+                                                    }
+
+                                                    return (
+                                                        <div key={spec.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', border: '0.5px solid var(--bb-color-border)', background: 'var(--bb-color-panel-soft)' }}>
+                                                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: statusColor, flexShrink: 0 }} />
+                                                            <div style={{ fontSize: '11px', color: 'var(--bb-color-foreground)', flex: 1 }}>{spec.name}</div>
+                                                            <span style={{ 
+                                                                fontSize: '10px', 
+                                                                padding: '1px 5px', 
+                                                                borderRadius: '8px', 
+                                                                background: statusText === 'done' ? 'color-mix(in srgb, var(--bb-color-success) 14%, var(--bb-color-panel))' : statusText === 'running' ? 'color-mix(in srgb, var(--bb-color-link) 14%, var(--bb-color-panel))' : 'var(--bb-color-panel-strong)', 
+                                                                color: statusText === 'done' ? 'var(--bb-color-success)' : statusText === 'running' ? 'var(--bb-color-link)' : 'var(--bb-color-muted)' 
+                                                            }}>
+                                                                {statusText}
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                });
+                                            })()}
+                                        </div>
+                                    </div>
+                                )}
                             </section>
                         )}
 
@@ -397,6 +487,53 @@ const App = () => {
                                     );
                                 })}
                             </div>
+                        </section>
+
+                        <section className="bb-section">
+                            <div className="bb-section-header" style={{ marginBottom: '8px' }}>
+                                <div className="bb-section-title">AI Agent Review</div>
+                                <label className={`bb-switch ${configuration.agentReviewEnabled ? 'bb-switch--active' : ''}`}>
+                                    <input
+                                        type="checkbox"
+                                        checked={configuration.agentReviewEnabled}
+                                        onChange={event => vscode.postMessage({ type: 'updateAgentReviewEnabled', enabled: event.currentTarget.checked })}
+                                        disabled={loading}
+                                        style={{ display: 'none' }}
+                                    />
+                                    <span className="bb-switch-slider" />
+                                </label>
+                            </div>
+                            {configuration.agentReviewEnabled && (
+                                <div className="bb-toggle-list" style={{ marginTop: '8px' }}>
+                                    {configuration.agentBackends.map(backend => (
+                                        <label key={backend.id} className={`bb-toggle-row bb-toggle-row--backend${backend.enabled ? ' bb-toggle-row--enabled' : ''}`}>
+                                            <input
+                                                type="checkbox"
+                                                checked={backend.enabled}
+                                                onChange={event => vscode.postMessage({ type: 'updateAgentBackendSelection', backendId: backend.id as AgentBackendId, enabled: event.currentTarget.checked })}
+                                                disabled={loading}
+                                            />
+                                            <span className="bb-toggle-main">
+                                                <span className="bb-toggle-label">{backend.label}</span>
+                                                <span className="bb-toggle-detail">{backend.description}</span>
+                                            </span>
+                                            <button
+                                                className={`bb-preferred-button${backend.preferred ? ' bb-preferred-button--active' : ''}`}
+                                                onClick={event => {
+                                                    event.preventDefault();
+                                                    vscode.postMessage({ type: 'updateAgentPreferredBackend', backendId: backend.id as AgentBackendId });
+                                                }}
+                                                disabled={loading}
+                                            >
+                                                {backend.preferred ? 'Preferred' : 'Use first'}
+                                            </button>
+                                            <span className={`bb-status-pill${backend.available ? ' bb-status-pill--ok' : ' bb-status-pill--off'}`}>
+                                                {backend.available ? backend.authenticated === false ? 'Needs login' : 'Available' : 'Missing'}
+                                            </span>
+                                        </label>
+                                    ))}
+                                </div>
+                            )}
                         </section>
 
                         {error && (
@@ -479,51 +616,127 @@ const App = () => {
                 {activeTab === 'agents' && (
                     <main className="bb-view">
                         <section className="bb-section">
-                            <label className={`bb-toggle-row bb-toggle-row--agent${configuration.agentReviewEnabled ? ' bb-toggle-row--enabled' : ''}`}>
-                                <input
-                                    type="checkbox"
-                                    checked={configuration.agentReviewEnabled}
-                                    onChange={event => vscode.postMessage({ type: 'updateAgentReviewEnabled', enabled: event.currentTarget.checked })}
-                                    disabled={loading}
-                                />
-                                <span className="bb-toggle-main">
-                                    <span className="bb-toggle-label">Agent review</span>
-                                    <span className="bb-toggle-detail">Run CLI agents after deterministic scanners</span>
-                                </span>
-                            </label>
+                            <div className="bb-section-title">
+                                {configuration.agentReviewEnabled 
+                                    ? `Last scan — ${configuration.scanDepthLabel} · ${getDepthAgentCount(configuration.scanDepth)} agents` 
+                                    : 'Agent review is disabled'}
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px', marginBottom: '8px' }}>
+                                <div style={{ background: 'var(--bb-color-panel-soft)', borderRadius: '6px', padding: '7px', border: '0.5px solid var(--bb-color-border)', textAlign: 'center' }}>
+                                    <div style={{ fontSize: '16px', fontWeight: 500, color: 'var(--bb-color-link)' }}>
+                                        {configuration.agentReviewEnabled ? getDepthAgentCount(configuration.scanDepth) : 0}
+                                    </div>
+                                    <div style={{ fontSize: '10px', color: 'var(--bb-color-muted)' }}>Agents ran</div>
+                                </div>
+                                <div style={{ background: 'var(--bb-color-panel-soft)', borderRadius: '6px', padding: '7px', border: '0.5px solid var(--bb-color-border)', textAlign: 'center' }}>
+                                    <div style={{ fontSize: '16px', fontWeight: 500, color: 'var(--bb-color-success)' }}>
+                                        {configuration.agentReviewEnabled ? issues.filter(i => i.sourceType === 'agent-only' || i.sourceType === 'agent-grounded').length : 0}
+                                    </div>
+                                    <div style={{ fontSize: '10px', color: 'var(--bb-color-muted)' }}>Findings</div>
+                                </div>
+                            </div>
                         </section>
 
                         <section className="bb-section">
-                            <div className="bb-section-title">Backends</div>
-                            <div className="bb-toggle-list">
-                                {configuration.agentBackends.map(backend => (
-                                    <label key={backend.id} className={`bb-toggle-row bb-toggle-row--backend${backend.enabled ? ' bb-toggle-row--enabled' : ''}`}>
-                                        <input
-                                            type="checkbox"
-                                            checked={backend.enabled}
-                                            onChange={event => vscode.postMessage({ type: 'updateAgentBackendSelection', backendId: backend.id as AgentBackendId, enabled: event.currentTarget.checked })}
-                                            disabled={loading}
-                                        />
-                                        <span className="bb-toggle-main">
-                                            <span className="bb-toggle-label">{backend.label}</span>
-                                            <span className="bb-toggle-detail">{backend.description}</span>
-                                        </span>
-                                        <button
-                                            className={`bb-preferred-button${backend.preferred ? ' bb-preferred-button--active' : ''}`}
-                                            onClick={event => {
-                                                event.preventDefault();
-                                                vscode.postMessage({ type: 'updateAgentPreferredBackend', backendId: backend.id as AgentBackendId });
-                                            }}
-                                            disabled={loading}
-                                        >
-                                            {backend.preferred ? 'Preferred' : 'Use first'}
-                                        </button>
-                                        <span className={`bb-status-pill${backend.available ? ' bb-status-pill--ok' : ' bb-status-pill--off'}`}>
-                                            {backend.available ? backend.authenticated === false ? 'Needs login' : 'Available' : 'Missing'}
-                                        </span>
-                                    </label>
-                                ))}
-                            </div>
+                            <div className="bb-section-title">Specialists</div>
+                            {!configuration.agentReviewEnabled ? (
+                                <div className="bb-empty-state">
+                                    <div className="bb-empty-title">Agent Review Disabled</div>
+                                    <div className="bb-empty-copy">Enable Agent Review in the Scan tab to run AI specialists.</div>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                    {(() => {
+                                        const agentIssues = issues.filter(i => i.sourceType === 'agent-only' || i.sourceType === 'agent-grounded');
+                                        const count = getDepthAgentCount(configuration.scanDepth);
+                                        const activeSpecs = ALL_SPECIALISTS.slice(0, count);
+
+                                        return activeSpecs.map((specTemplate, idx) => {
+                                            const specName = specTemplate.name;
+                                            const specFocus = specTemplate.focus;
+                                            
+                                            const specFindings = agentIssues.filter(issue => {
+                                                const roles = issue.sourceRoles || [];
+                                                if (roles.length > 0) {
+                                                    return roles.includes(specName);
+                                                }
+                                                if (idx === 0) {
+                                                    return roles.length === 0;
+                                                }
+                                                return false;
+                                            });
+
+                                            const isExpanded = !!expandedSpec[specName];
+                                            const toggleSpec = (name: string) => {
+                                                setExpandedSpec(prev => ({ ...prev, [name]: !prev[name] }));
+                                            };
+
+                                            return (
+                                                <div 
+                                                    key={specName} 
+                                                    style={{ border: '0.5px solid var(--bb-color-border)', borderRadius: '7px', overflow: 'hidden' }}
+                                                >
+                                                    <div 
+                                                        style={{ padding: '8px 10px', background: 'var(--bb-color-panel-soft)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
+                                                        onClick={() => toggleSpec(specName)}
+                                                    >
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                                                            <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--bb-color-success)', flexShrink: 0 }} />
+                                                            <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--bb-color-foreground)' }}>{specName}</span>
+                                                        </div>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                                            <span style={{ 
+                                                                fontSize: '10px', 
+                                                                padding: '1px 5px', 
+                                                                borderRadius: '4px', 
+                                                                background: specFindings.length > 0 ? 'var(--bb-severity-high-bg)' : 'var(--bb-color-panel-strong)', 
+                                                                color: specFindings.length > 0 ? 'var(--bb-severity-high)' : 'var(--bb-color-muted)' 
+                                                            }}>
+                                                                {specFindings.length} {specFindings.length === 1 ? 'finding' : 'findings'}
+                                                            </span>
+                                                            <span style={{ 
+                                                                display: 'inline-block',
+                                                                transform: isExpanded ? 'rotate(180deg)' : 'none',
+                                                                transition: 'transform var(--bb-transition-fast)',
+                                                                fontSize: '10px',
+                                                                color: 'var(--bb-color-muted)'
+                                                            }}>
+                                                                ▼
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    {isExpanded && (
+                                                        <div style={{ padding: '8px 10px', borderTop: '0.5px solid var(--bb-color-border)', background: 'var(--bb-color-panel)' }}>
+                                                            <div style={{ fontSize: '10px', color: 'var(--bb-color-muted)', marginBottom: '6px' }}>
+                                                                Backend: {configuration.agentBackends.find(b => b.enabled)?.label || 'Gemini'} · Focus: {specFocus}
+                                                            </div>
+                                                            {specFindings.length === 0 ? (
+                                                                <div style={{ fontSize: '11px', color: 'var(--bb-color-muted)', fontStyle: 'italic', padding: '4px 0' }}>
+                                                                    No findings. Codebase looks secure according to this specialist.
+                                                                </div>
+                                                            ) : (
+                                                                specFindings.map(finding => (
+                                                                    <div key={finding.id} className="spec-finding">
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
+                                                                            <span className={`bb-stat-label-badge bb-stat-label-badge--${finding.severity}`} style={{ fontSize: '9px', fontWeight: 500, padding: '1px 4px', borderRadius: '3px', textTransform: 'uppercase' }}>
+                                                                                {finding.severity}
+                                                                            </span>
+                                                                            <span style={{ fontSize: '11px', color: 'var(--bb-color-foreground)', fontWeight: 500 }}>{finding.title}</span>
+                                                                        </div>
+                                                                        <div style={{ fontSize: '10px', color: 'var(--bb-color-muted)' }}>
+                                                                            {basename(finding.filePath)}:{finding.line}
+                                                                        </div>
+                                                                    </div>
+                                                                ))
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        });
+                                    })()}
+                                </div>
+                            )}
                         </section>
                     </main>
                 )}

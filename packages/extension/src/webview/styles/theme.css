@@ -658,3 +658,86 @@ button {
     border-color: var(--bb-color-link);
     background: color-mix(in srgb, var(--bb-color-link) 12%, var(--bb-color-panel));
 }
+
+/* Toggle Switch Styles */
+.bb-switch {
+    position: relative;
+    display: inline-block;
+    width: 28px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.bb-switch-slider {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--bb-color-panel-strong);
+    transition: background-color var(--bb-transition-normal);
+    border-radius: 99px;
+    border: 1px solid var(--bb-color-border);
+}
+
+.bb-switch-slider:before {
+    position: absolute;
+    content: "";
+    height: 10px;
+    width: 10px;
+    left: 2px;
+    bottom: 2px;
+    background-color: var(--bb-color-muted);
+    transition: transform var(--bb-transition-normal), background-color var(--bb-transition-normal);
+    border-radius: 50%;
+}
+
+.bb-switch--active .bb-switch-slider {
+    background-color: var(--bb-color-link);
+    border-color: var(--bb-color-link);
+}
+
+.bb-switch--active .bb-switch-slider:before {
+    transform: translateX(12px);
+    background-color: #ffffff;
+}
+
+/* Specialist results & findings classes */
+.spec-finding {
+    padding: 6px 8px;
+    border-radius: var(--bb-radius-md);
+    background: var(--bb-color-panel-soft);
+    border: 0.5px solid var(--bb-color-border);
+    margin-bottom: 5px;
+}
+
+.spec-finding:last-child {
+    margin-bottom: 0;
+}
+
+.bb-stat-label-badge {
+    color: var(--severity-color, var(--bb-severity-info));
+    background-color: var(--severity-bg, var(--bb-severity-info-bg));
+}
+
+.bb-stat-label-badge--critical {
+    --severity-color: var(--bb-severity-critical);
+    --severity-bg: var(--bb-severity-critical-bg);
+}
+.bb-stat-label-badge--high {
+    --severity-color: var(--bb-severity-high);
+    --severity-bg: var(--bb-severity-high-bg);
+}
+.bb-stat-label-badge--medium {
+    --severity-color: var(--bb-severity-medium);
+    --severity-bg: var(--bb-severity-medium-bg);
+}
+.bb-stat-label-badge--low {
+    --severity-color: var(--bb-severity-low);
+    --severity-bg: var(--bb-severity-low-bg);
+}
+.bb-stat-label-badge--info {
+    --severity-color: var(--bb-severity-info);
+    --severity-bg: var(--bb-severity-info-bg);
+}
+
