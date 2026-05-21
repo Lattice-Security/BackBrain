@@ -349,6 +349,73 @@ button {
     background: var(--bb-color-panel-strong);
 }
 
+.bb-scanner-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.bb-scanner-pill {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    border: 0.5px solid var(--bb-color-border);
+    background: var(--bb-color-panel-soft);
+    color: var(--bb-color-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: border-color var(--bb-transition-fast), background var(--bb-transition-fast), color var(--bb-transition-fast);
+}
+
+.bb-scanner-pill:hover:not(:disabled) {
+    border-color: var(--bb-color-link);
+    color: var(--bb-color-foreground);
+}
+
+/* Dot indicator inside each pill */
+.bb-scanner-pill-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--bb-color-muted);
+    opacity: 0.5;
+    transition: background var(--bb-transition-fast), opacity var(--bb-transition-fast);
+}
+
+/* Enabled = green */
+.bb-scanner-pill--enabled {
+    background: color-mix(in srgb, var(--bb-color-success) 14%, var(--bb-color-panel));
+    color: var(--bb-color-success);
+    border-color: color-mix(in srgb, var(--bb-color-success) 35%, var(--bb-color-border));
+}
+
+.bb-scanner-pill--enabled .bb-scanner-pill-dot {
+    background: var(--bb-color-success);
+    opacity: 1;
+}
+
+/* Unavailable = amber/yellow — not installed, cannot be selected */
+.bb-scanner-pill--unavailable {
+    background: color-mix(in srgb, var(--bb-color-warning) 12%, var(--bb-color-panel));
+    color: var(--bb-color-warning);
+    border-color: color-mix(in srgb, var(--bb-color-warning) 30%, var(--bb-color-border));
+    cursor: not-allowed;
+    opacity: 0.75;
+}
+
+.bb-scanner-pill--unavailable .bb-scanner-pill-dot {
+    background: var(--bb-color-warning);
+    opacity: 0.8;
+}
+
+.bb-scanner-pill:disabled {
+    cursor: not-allowed;
+}
+
 .bb-start-row {
     padding: 10px 12px;
 }

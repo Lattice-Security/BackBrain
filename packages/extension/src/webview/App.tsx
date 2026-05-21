@@ -368,24 +368,34 @@ const App = () => {
                                     Check
                                 </button>
                             </div>
-                            <div className="bb-toggle-list">
-                                {configuration.scanners.map(scanner => (
-                                    <label key={scanner.id} className={`bb-toggle-row${scanner.enabled ? ' bb-toggle-row--enabled' : ''}`}>
-                                        <input
-                                            type="checkbox"
-                                            checked={scanner.enabled}
-                                            onChange={event => vscode.postMessage({ type: 'updateScannerSelection', scannerId: scanner.id, enabled: event.currentTarget.checked })}
-                                            disabled={loading}
-                                        />
-                                        <span className="bb-toggle-main">
-                                            <span className="bb-toggle-label">{scanner.label}</span>
-                                            <span className="bb-toggle-detail">{scanner.description}</span>
-                                        </span>
-                                        <span className={`bb-status-pill${scanner.available ? ' bb-status-pill--ok' : ' bb-status-pill--off'}`}>
-                                            {scanner.available ? 'Available' : 'Missing'}
-                                        </span>
-                                    </label>
-                                ))}
+                            <div className="bb-scanner-pills">
+                                {configuration.scanners.map(scanner => {
+                                    const isUnavailable = !scanner.available;
+                                    const pillClass = [
+                                        'bb-scanner-pill',
+                                        isUnavailable
+                                            ? 'bb-scanner-pill--unavailable'
+                                            : scanner.enabled
+                                                ? 'bb-scanner-pill--enabled'
+                                                : '',
+                                    ].filter(Boolean).join(' ');
+                                    return (
+                                        <button
+                                            key={scanner.id}
+                                            className={pillClass}
+                                            onClick={() => {
+                                                if (isUnavailable) return;
+                                                vscode.postMessage({ type: 'updateScannerSelection', scannerId: scanner.id, enabled: !scanner.enabled });
+                                            }}
+                                            disabled={loading || isUnavailable}
+                                            title={isUnavailable ? `${scanner.label} is not installed` : scanner.description}
+                                            aria-pressed={scanner.enabled}
+                                        >
+                                            <span className="bb-scanner-pill-dot" />
+                                            {scanner.label}
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </section>
 
