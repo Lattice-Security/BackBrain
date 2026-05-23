@@ -239,11 +239,20 @@ export class CliAgentReviewScanner implements SecurityScanner {
     }
 
     async isAvailable(): Promise<boolean> {
-        const available = await this.getAvailableBackends();
-        logger.info('Agent review backend availability checked', {
-            availableBackends: available.map(item => item.id),
+        // Fast path: only check if any backend binary exists on PATH.
+        // The full readiness probe (invokes the AI model) runs at scan
+        // time via getAvailableBackends(), not here.
+        const candidates = (Object.keys(this.backends) as AgentBackendId[])
+            .filter(id => this.backends[id].enabled);
+        if (candidates.length === 0) return false;
+        const results = await Promise.all(
+            candidates.map(id => this.checkBackendAvailable(id, this.backends[id])),
+        );
+        const anyAvailable = results.some(Boolean);
+        logger.info('Agent review binary availability checked', {
+            available: anyAvailable,
         });
-        return available.length > 0;
+        return anyAvailable;
     }
 
     async scanFile(filePath: string): Promise<SecurityIssue[]> {

@@ -14,7 +14,6 @@ import {
     toIssueData,
 } from '../webview/messages';
 import { getActiveProvider } from '../services/ai-adapter-factory';
-import { GeminiCliInstaller } from '../utils/gemini-cli-installer';
 
 const logger = createLogger('SeverityPanel');
 const execFileAsync = promisify(execFile);
@@ -247,21 +246,9 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private async _checkAgentBackendAvailability(
         backendId: AgentBackendId,
         binaryPath: string,
-    ): Promise<{ available: boolean; authenticated?: boolean }> {
-        if (backendId === 'gemini') {
-            const installer = new GeminiCliInstaller();
-            const available = binaryPath === 'gemini'
-                ? await installer.isInstalled()
-                : await this._checkCliAvailable(binaryPath);
-            if (!available) {
-                return { available: false, authenticated: false };
-            }
-            return {
-                available: true,
-                authenticated: await installer.isAuthenticated(),
-            };
-        }
-
+    ): Promise<{ available: boolean }> {
+        // Fast path: only check if the binary exists on PATH.
+        // Authentication is verified lazily when a scan starts.
         return { available: await this._checkCliAvailable(binaryPath) };
     }
 
