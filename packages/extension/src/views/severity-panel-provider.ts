@@ -176,11 +176,20 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private async _getConfigurationState(forceRefresh: boolean = false): Promise<ConfigurationState> {
         const config = vscode.workspace.getConfiguration('backbrain');
         const enabledScanners = new Set(this._getEnabledScannerIds());
-        
-        if (forceRefresh || !this._cachedScannerStatuses) {
-            this._cachedScannerStatuses = await this._securityService.getScannerStatuses();
-        }
-        const statusMap = new Map(this._cachedScannerStatuses.map(status => [status.id, status]));
+
+        // Fetch scanner statuses and agent backend states in parallel
+        const [scannerStatuses, agentBackendStates] = await Promise.all([
+            (forceRefresh || !this._cachedScannerStatuses)
+                ? this._securityService.getScannerStatuses()
+                : Promise.resolve(this._cachedScannerStatuses),
+            (forceRefresh || !this._cachedAgentBackendStates)
+                ? this._getAgentBackendStates()
+                : Promise.resolve(this._cachedAgentBackendStates),
+        ]);
+        this._cachedScannerStatuses = scannerStatuses;
+        this._cachedAgentBackendStates = agentBackendStates;
+
+        const statusMap = new Map(scannerStatuses.map(status => [status.id, status]));
         const scanDepth = config.get<AgentScanDepth>('ai.agentScanDepth', 'developer');
 
         // Build a human-readable provider label from whatever is currently active
@@ -190,10 +199,6 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         const activeProvider = activeProviderName
             ? `${activeProviderName}${configuredModel ? ' · ' + configuredModel : ''}`
             : configuredProvider || undefined;
-
-        if (forceRefresh || !this._cachedAgentBackendStates) {
-            this._cachedAgentBackendStates = await this._getAgentBackendStates();
-        }
 
         return {
             scanners: DEFAULT_ENABLED_SCANNERS.map(scannerId => {

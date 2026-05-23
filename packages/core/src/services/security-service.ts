@@ -598,32 +598,41 @@ export class SecurityService {
      * Get all supported extensions from available scanners
      */
     async getSupportedExtensions(): Promise<string[]> {
+        const results = await Promise.all(this.scanners.map(async (scanner) => {
+            try {
+                const available = await scanner.isAvailable();
+                if (available) {
+                    return scanner.getSupportedExtensions();
+                }
+            } catch {
+                // scanner not available
+            }
+            return [] as string[];
+        }));
         const extensions = new Set<string>();
-        for (const scanner of this.scanners) {
-            const available = await scanner.isAvailable();
-            if (available) {
-                scanner.getSupportedExtensions().forEach(ext => extensions.add(ext));
+        for (const exts of results) {
+            for (const ext of exts) {
+                extensions.add(ext);
             }
         }
         return Array.from(extensions);
     }
 
     async getScannerStatuses(): Promise<ScannerStatus[]> {
-        const statuses: ScannerStatus[] = [];
-        for (const scanner of this.scanners) {
+        const results = await Promise.all(this.scanners.map(async (scanner) => {
             let available = false;
             try {
                 available = await scanner.isAvailable();
             } catch {
                 available = false;
             }
-            statuses.push({
+            return {
                 id: scanner.name,
                 available,
                 scanKind: scanner.scanKind === 'agent' ? 'agent' : 'deterministic',
                 supportedExtensions: scanner.getSupportedExtensions(),
-            });
-        }
-        return statuses;
+            } as ScannerStatus;
+        }));
+        return results;
     }
 }

@@ -35,13 +35,16 @@ async function configureInstalledOptionalScannerTools(
   cliInstaller: GitHubCliInstaller,
   onToolReady: (toolId: OptionalToolId, binaryPath: string) => void,
 ): Promise<void> {
-  for (const toolId of ['gitleaks', 'trivy', 'osv-scanner'] as const) {
+  const toolIds = ['gitleaks', 'trivy', 'osv-scanner'] as const;
+  const results = await Promise.all(toolIds.map(async (toolId) => {
     const isAvailable = await cliInstaller.isAvailable(toolId);
-    if (isAvailable) {
-      const binaryPath = cliInstaller.getBinaryPath(toolId);
-      onToolReady(toolId, binaryPath);
-      logger.info(`${cliInstaller.getDisplayName(toolId)} found`, { path: binaryPath });
-    }
+    return { toolId, isAvailable };
+  }));
+  for (const { toolId, isAvailable } of results) {
+    if (!isAvailable) continue;
+    const binaryPath = cliInstaller.getBinaryPath(toolId);
+    onToolReady(toolId, binaryPath);
+    logger.info(`${cliInstaller.getDisplayName(toolId)} found`, { path: binaryPath });
   }
 }
 
@@ -332,24 +335,22 @@ export async function activate(context: vscode.ExtensionContext) {
       logger.error('Unexpected error during scanner registration', { error: err });
     }
 
-    const scannerToolConfigurationPromise = Promise.all([
-      configureInstalledOptionalScannerTools(
-        cliInstaller,
-        (toolId, binaryPath) => {
-          scanners.forEach((scanner) => {
-            if (toolId === 'gitleaks' && scanner instanceof GitleaksScanner) {
-              scanner.setBinaryPath(binaryPath);
-            }
-            if (toolId === 'trivy' && scanner instanceof TrivyScanner) {
-              scanner.setBinaryPath(binaryPath);
-            }
-            if (toolId === 'osv-scanner' && scanner instanceof OSVScanner) {
-              scanner.setBinaryPath(binaryPath);
-            }
-          });
-        },
-      ),
-    ]).catch((error) => {
+    const scannerToolConfigurationPromise = configureInstalledOptionalScannerTools(
+      cliInstaller,
+      (toolId, binaryPath) => {
+        scanners.forEach((scanner) => {
+          if (toolId === 'gitleaks' && scanner instanceof GitleaksScanner) {
+            scanner.setBinaryPath(binaryPath);
+          }
+          if (toolId === 'trivy' && scanner instanceof TrivyScanner) {
+            scanner.setBinaryPath(binaryPath);
+          }
+          if (toolId === 'osv-scanner' && scanner instanceof OSVScanner) {
+            scanner.setBinaryPath(binaryPath);
+          }
+        });
+      },
+    ).catch((error) => {
       logger.warn('Optional scanner tool configuration failed', { error });
     });
 
@@ -360,23 +361,23 @@ export async function activate(context: vscode.ExtensionContext) {
       logger.warn('Gemini CLI setup flow failed', { error });
     });
 
-    // Load Vibe rules and setup watcher
+    // Load Vibe rules and setup watcher (non-blocking – UI registers first)
     if (vibeScanner && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
       const root = vscode.workspace.workspaceFolders[0]!.uri;
       const scanner = vibeScanner; // Capture for closure
 
-      // Initialize config file if it doesn't exist
-      await VibeRuleLoader.initializeConfig(root);
-
-      // Initial load (awaited to prevent race condition)
-      try {
-        const rules = await VibeRuleLoader.loadRules(root);
-        scanner.setRules(rules);
-        logger.info(`Loaded ${rules.length} Vibe rules`);
-      } catch (err) {
-        logger.error('Failed to load initial Vibe rules', { error: err });
-        vscode.window.showErrorMessage('BackBrain: Failed to load Vibe rules. Some scanning features may be limited.');
-      }
+      // Fire-and-forget: initialise and load rules in the background
+      void (async () => {
+        try {
+          await VibeRuleLoader.initializeConfig(root);
+          const rules = await VibeRuleLoader.loadRules(root);
+          scanner.setRules(rules);
+          logger.info(`Loaded ${rules.length} Vibe rules`);
+        } catch (err) {
+          logger.error('Failed to load initial Vibe rules', { error: err });
+          vscode.window.showErrorMessage('BackBrain: Failed to load Vibe rules. Some scanning features may be limited.');
+        }
+      })();
 
       // Watch for changes
       const watcher = vscode.workspace.createFileSystemWatcher(
