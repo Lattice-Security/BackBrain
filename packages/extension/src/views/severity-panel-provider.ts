@@ -445,6 +445,10 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
 
         try {
             const scanQueue = await this._resolveScanPaths(target);
+            if (scanQueue === null) {
+                // User cancelled the custom path picker — abort silently, do not start a scan
+                return;
+            }
             await this._scanPaths(scanQueue, target);
         } catch (error) {
             logger.error('Scan failed', { error });
@@ -457,52 +461,107 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async _resolveScanPaths(target: Exclude<ScanTarget, 'file'>): Promise<string[]> {
+    /**
+     * Resolves the list of file paths to scan for a given target.
+     *
+     * Returns `null` if the operation should be silently aborted (user cancelled
+     * the custom path picker). The caller must NOT call `_scanPaths` in that case.
+     */
+    private async _resolveScanPaths(target: Exclude<ScanTarget, 'file'>): Promise<string[] | null> {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders || workspaceFolders.length === 0) {
             throw new Error('No workspace folder open');
         }
         const root = workspaceFolders[0]!.uri;
 
+        // ── Build the shared exclude/extension config once ─────────────────────
+        const config = vscode.workspace.getConfiguration('backbrain');
+        const defaultExcludes = ['node_modules', 'dist', 'build', '.git', 'out', '.vscode'];
+        const userExcludes = config.get<string[]>('excludePaths', []);
+        const excludePaths = Array.from(new Set([...defaultExcludes, ...userExcludes]));
+        const excludeGlob = `**/{${excludePaths.join(',')}}/**`;
+
+        const extensions = await this._securityService.getSupportedExtensions();
+        const extensionPattern = extensions.map(ext => ext.replace('.', '')).join(',');
+
+        // ── Custom path ────────────────────────────────────────────────────────
         if (target === 'custom') {
             const selected = await vscode.window.showOpenDialog({
                 canSelectFiles: true,
                 canSelectFolders: true,
                 canSelectMany: true,
                 defaultUri: root,
-                openLabel: 'Scan',
+                openLabel: 'Scan selected',
+                title: 'BackBrain: Select files or folders to scan',
             });
-            return (selected || []).filter(uri => uri.scheme === 'file').map(uri => uri.fsPath);
+
+            // User dismissed the dialog — abort silently, do not start a scan
+            if (!selected || selected.length === 0) {
+                return null;
+            }
+
+            // Expand folder selections to individual file paths.
+            // This is required because Tree-sitter, Vibe-code, OSV, and the agent
+            // scanner all treat every element of `paths[]` as an individual file
+            // and will break if handed a directory path.
+            const paths: string[] = [];
+            for (const uri of selected) {
+                if (uri.scheme !== 'file') continue;
+                try {
+                    const stat = await vscode.workspace.fs.stat(uri);
+                    if (stat.type === vscode.FileType.Directory) {
+                        const pattern = new vscode.RelativePattern(uri, `**/*.{${extensionPattern}}`);
+                        const found = await vscode.workspace.findFiles(pattern, excludeGlob, 5000);
+                        paths.push(...found.map(f => f.fsPath));
+                    } else {
+                        paths.push(uri.fsPath);
+                    }
+                } catch {
+                    // stat failed (e.g. permission denied) — treat as a file path
+                    paths.push(uri.fsPath);
+                }
+            }
+            return paths;
         }
 
+        // ── Changed files ──────────────────────────────────────────────────────
         if (target === 'changed') {
             try {
-                const { stdout } = await execFileAsync('git', ['diff', '--name-only', 'HEAD'], {
+                const { stdout } = await execFileAsync('git', ['diff', '--name-only', 'HEAD', '--'], {
                     cwd: root.fsPath,
                     timeout: 10000,
                     maxBuffer: 1024 * 1024,
                 });
-                return stdout
+                const changedFiles = stdout
                     .split(/\r?\n/)
                     .map(line => line.trim())
                     .filter(Boolean)
                     .map(relativePath => vscode.Uri.joinPath(root, relativePath).fsPath);
+
+                if (changedFiles.length === 0) {
+                    // Clean working tree — notify and fall back to full workspace scan
+                    void vscode.window.showInformationMessage(
+                        'BackBrain: No changed files detected. Running full workspace scan instead.'
+                    );
+                    logger.info('git diff returned no changed files — falling back to workspace scan');
+                    // Fall through to workspace scan below
+                } else {
+                    logger.info(`Changed files scan: ${changedFiles.length} file(s) from git diff`);
+                    return changedFiles;
+                }
             } catch (error) {
-                logger.warn('Failed to resolve changed files for scan', { error });
-                throw new Error('Could not determine changed files for this workspace.');
+                // git not installed, not a repo, or any other git failure
+                logger.warn('git diff failed — falling back to workspace scan', { error });
+                void vscode.window.showInformationMessage(
+                    'BackBrain: Git is not available or this is not a git repository. Running full workspace scan instead.'
+                );
+                // Fall through to workspace scan below
             }
         }
 
-        // Workspace scan: find all supported files and prioritize active/open files.
-        const extensions = await this._securityService.getSupportedExtensions();
-        const extensionPattern = extensions.map(ext => ext.replace('.', '')).join(',');
+        // ── Workspace scan (also used as fallback for 'changed') ───────────────
+        // Finds all supported files and prioritises the active and open editors.
         const globPattern = `**/*.{${extensionPattern}}`;
-
-        const config = vscode.workspace.getConfiguration('backbrain');
-        const defaultExcludes = ['node_modules', 'dist', 'build', '.git', 'out', '.vscode'];
-        const userExcludes = config.get<string[]>('excludePaths', []);
-        const excludePaths = Array.from(new Set([...defaultExcludes, ...userExcludes]));
-        const excludeGlob = `**/{${excludePaths.join(',')}}/**`;
         logger.debug(`Using exclude pattern: ${excludeGlob}`);
 
         const files = await vscode.workspace.findFiles(globPattern, excludeGlob, 5000);
