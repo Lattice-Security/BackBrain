@@ -154,6 +154,8 @@ export interface SecurityScanStatusUpdate {
     backend?: string;
     scanner?: string;
     degraded?: boolean;
+    /** Dynamic agent names determined by the planner, one per specialist */
+    agents?: string[];
 }
 
 export interface SecurityScanner {

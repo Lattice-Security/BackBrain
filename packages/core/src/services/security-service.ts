@@ -469,6 +469,11 @@ export class SecurityService {
         });
     }
 
+    /** Expose scanners for debug/step-through mode */
+    getScanners(): SecurityScanner[] {
+        return this.scanners;
+    }
+
     async scanFile(filePath: string, content: string, options: SecurityScanOptions = {}): Promise<SecurityScanResult> {
         const issues: CodeIssue[] = [];
         const scannersUsed: string[] = [];
