@@ -610,8 +610,18 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
 
         const totalDuration = Date.now() - startTime;
         logger.info('Scan complete', { target, issues: this._issues.length, durationMs: totalDuration });
-        this.setStatus('info', `Scan complete: ${this._issues.length} issue(s) found in ${Math.round(totalDuration / 100) / 10}s.`);
-        this._postMessage({ type: 'scanComplete', issues: this._issues });
+
+        if (this._debugMode) {
+            this.setStatus('info', 'Debug scan complete — toggle debug mode off to return to normal view');
+            this._postMessage({
+                type: 'statusUpdate',
+                level: 'info',
+                message: 'Debug scan complete — toggle debug mode off to return to normal view',
+            });
+        } else {
+            this.setStatus('info', `Scan complete: ${this._issues.length} issue(s) found in ${Math.round(totalDuration / 100) / 10}s.`);
+            this._postMessage({ type: 'scanComplete', issues: this._issues });
+        }
     }
 
     private async _runDebugScan(

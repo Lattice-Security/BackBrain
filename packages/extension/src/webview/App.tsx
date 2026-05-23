@@ -195,6 +195,7 @@ const App = () => {
                     setError(null);
                     setScanStatus(null);
                     setBatchProgress(null);
+                    setDebugSteps([]);
                     break;
                 case 'scanComplete':
                     setIssues(message.issues);
@@ -364,6 +365,7 @@ const App = () => {
                                 const next = !debugMode;
                                 setDebugMode(next);
                                 setDebugSteps([]);
+                                if (!next) setLoading(false);
                                 vscode.postMessage({ type: 'setDebugMode', enabled: next });
                             }}
                             title={debugMode ? 'Disable debug mode' : 'Enable debug mode'}
