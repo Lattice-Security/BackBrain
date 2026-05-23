@@ -631,13 +631,12 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     ): Promise<void> {
         this._debugSteps = [];
         this._debugPhase = 'init';
-        this._addDebugStep('init', 'Scan initiated', 'done', `${scanQueue.length} files to scan, ${selectedScanners.length} scanner(s) selected`);
+        this._addDebugStep('init', 'Scan initiated', 'done', `${scanQueue.length} files in queue, ${selectedScanners.length} scanner(s) selected`);
 
         const allScanners = this._securityService.getScanners();
-        const probeFile = scanQueue[0] || process.cwd();
-        this._debugPhase = 'running';
+        this._debugPhase = 'checking';
 
-        // ── Pass 1: add all scanner entries immediately, then check availability in parallel ──
+        // ── Add all scanner entries immediately ──
         const selected: Array<typeof allScanners[number]> = [];
         for (const scanner of allScanners) {
             if (selectedScanners.includes(scanner.name)) {
@@ -648,84 +647,37 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             }
         }
 
+        // ── Check availability for all selected scanners in parallel ──
         const availabilityResults = await Promise.all(
             selected.map(async (scanner) => {
-                if (token.isCancellationRequested) return { scanner, available: false };
+                if (token.isCancellationRequested) return { scanner, available: false, dur: 0 };
+                const t0 = Date.now();
                 try {
                     const available = await scanner.isAvailable();
-                    return { scanner, available };
+                    return { scanner, available, dur: Date.now() - t0 };
                 } catch {
-                    return { scanner, available: false };
+                    return { scanner, available: false, dur: Date.now() - t0 };
                 }
             })
         );
 
-        let ran = 0;
-
-        // ── Pass 2: update availability, then run each scanner ──
-        for (const { scanner, available } of availabilityResults) {
+        let availableCount = 0;
+        for (const { scanner, available, dur } of availabilityResults) {
             if (token.isCancellationRequested) return;
 
             if (!available) {
-                this._updateDebugStep(scanner.name, 'unavailable', 'Not installed');
-                continue;
-            }
-
-            ran++;
-            const t0 = Date.now();
-            this._updateDebugStep(scanner.name, 'running', 'Started');
-
-            if (scanner.scanKind !== 'agent') {
-                try {
-                    const result = await scanner.scan(scanQueue);
-                    const dur = Date.now() - t0;
-                    this._updateDebugStep(scanner.name, 'done', `Closed — ${result.issues.length} issues in ${dur}ms`);
-                    const codeIssues = result.issues.map((i: any) => ({
-                        id: i.id || `${scanner.name}-${Math.random().toString(36).slice(2)}`,
-                        title: i.title || '',
-                        description: i.description || '',
-                        severity: i.severity || 'info',
-                        filePath: i.location?.filePath || i.filePath || '',
-                        line: i.location?.line || i.line || 1,
-                        column: i.location?.column || i.column || 1,
-                        category: i.category || 'logic',
-                        source: i.source,
-                        sourceType: i.sourceType,
-                        confidence: i.confidence,
-                        verificationStatus: i.verificationStatus,
-                    }));
-                    this._issues.push(...codeIssues);
-                } catch (error: any) {
-                    const dur = Date.now() - t0;
-                    this._updateDebugStep(scanner.name, 'failed', `Failed — ${error?.message ?? error} (${dur}ms)`);
-                }
+                this._updateDebugStep(scanner.name, 'unavailable', `Not installed (${dur}ms)`);
             } else {
-                try {
-                    const scanPromise = scanner.scanFile(probeFile);
-                    const result = await Promise.race([
-                        scanPromise.then(issues => ({ kind: 'done' as const, issues })),
-                        new Promise<{ kind: 'timeout' }>(resolve =>
-                            setTimeout(() => resolve({ kind: 'timeout' }), 8000)
-                        ),
-                    ]);
-                    const dur = Date.now() - t0;
-                    if (result.kind === 'timeout') {
-                        this._updateDebugStep(scanner.name, 'working', `Closed — initiated correctly (${dur}ms)`);
-                    } else {
-                        this._updateDebugStep(scanner.name, 'done', `Closed — ${result.issues.length} issues in ${dur}ms`);
-                    }
-                } catch (error: any) {
-                    const dur = Date.now() - t0;
-                    this._updateDebugStep(scanner.name, 'failed', `Failed — ${error?.message ?? error} (${dur}ms)`);
-                }
+                availableCount++;
+                this._updateDebugStep(scanner.name, 'done', `Available (${dur}ms)`);
             }
         }
 
         this._debugPhase = 'complete';
-        if (ran === 0) {
+        if (availableCount === 0) {
             this._addDebugStep('complete', 'Done', 'done', 'Nothing to run — all scanners skipped or unavailable');
         } else {
-            this._addDebugStep('complete', 'Done', 'done', `${this._issues.length} total issues from ${ran} scanner(s)`);
+            this._addDebugStep('complete', 'Done', 'done', `${availableCount} scanner(s) available`);
         }
     }
 
