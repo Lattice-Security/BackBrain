@@ -55,8 +55,7 @@ export type WebviewMessage =
     | { type: 'batchFix' }
     | { type: 'requestFixHistory' }
     | { type: 'exportReport' }
-    | { type: 'setDebugMode'; enabled: boolean }
-    | { type: 'debugContinue' };
+    | { type: 'setDebugMode'; enabled: boolean };
 
 // ============================================================================
 // Extension → Webview Messages
@@ -124,7 +123,7 @@ export interface ConfigurationState {
 // Debug Mode Types
 // ============================================================================
 
-export type DebugStepStatus = 'pending' | 'ready' | 'running' | 'done' | 'failed' | 'unavailable';
+export type DebugStepStatus = 'pending' | 'ready' | 'running' | 'done' | 'failed' | 'unavailable' | 'working' | 'skipped';
 
 export interface DebugStep {
     id: string;

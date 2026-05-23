@@ -74,9 +74,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private _cachedAgentBackendStates: any[] | null = null;
     private _debugMode = false;
     private _debugSteps: DebugStep[] = [];
-    private _debugPaused = false;
     private _debugPhase = '';
-    private _debugResolve: (() => void) | null = null;
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
@@ -429,18 +427,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                     this._debugMode = message.enabled;
                     if (!message.enabled) {
                         this._debugSteps = [];
-                        this._debugPaused = false;
                         this._debugPhase = '';
-                        this._debugResolve = null;
-                    }
-                    break;
-
-                case 'debugContinue':
-                    this._debugPaused = false;
-                    this._sendDebugStatus();
-                    if (this._debugResolve) {
-                        this._debugResolve();
-                        this._debugResolve = null;
                     }
                     break;
             }
@@ -634,113 +621,90 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     ): Promise<void> {
         this._debugSteps = [];
         this._debugPhase = 'init';
-        this._addDebugStep('init', 'Scan initialised', 'done', `${scanQueue.length} files to scan`);
+        this._addDebugStep('init', 'Scan initiated', 'done', `${scanQueue.length} files to scan, ${selectedScanners.length} scanner(s) selected`);
 
-        // ── Phase 1: Check scanner availability ──
-        this._debugPhase = 'availability';
         const allScanners = this._securityService.getScanners();
-        const toRun: Array<{ name: string; scanner: import('@backbrain/core').SecurityScanner | undefined }> = [];
+        const probeFile = scanQueue[0] || process.cwd();
+        let ran = 0;
 
-        for (const name of selectedScanners) {
-            const scanner = allScanners.find(s => s.name === name);
-            toRun.push({ name, scanner });
-            this._addDebugStep(name, name, 'pending');
-        }
-        await this._debugPause();
-        if (token.isCancellationRequested) return;
+        this._debugPhase = 'running';
 
-        for (const entry of toRun) {
-            this._updateDebugStep(entry.name, 'running', 'Checking availability...');
-            if (!entry.scanner) {
-                this._updateDebugStep(entry.name, 'unavailable', 'Scanner not registered');
-                await this._debugPause();
-                if (token.isCancellationRequested) return;
+        for (const scanner of allScanners) {
+            if (token.isCancellationRequested) return;
+
+            const isSelected = selectedScanners.includes(scanner.name);
+
+            if (!isSelected) {
+                this._addDebugStep(scanner.name, scanner.name, 'skipped', 'Skipped — not selected');
                 continue;
             }
+
+            const t0 = Date.now();
             let available = false;
             try {
-                available = await entry.scanner.isAvailable();
+                available = await scanner.isAvailable();
             } catch { /* unavailable */ }
-            this._updateDebugStep(entry.name, available ? 'ready' : 'unavailable', available ? 'Available' : 'Not installed');
-            await this._debugPause();
-            if (token.isCancellationRequested) return;
-        }
-
-        // ── Phase 2: Run deterministic scanners one at a time ──
-        this._debugPhase = 'deterministic';
-        for (const entry of toRun) {
-            if (!entry.scanner || entry.scanner.scanKind === 'agent') continue;
-            if (token.isCancellationRequested) return;
-
-            const step = this._debugSteps.find(s => s.id === entry.name);
-            if (!step || step.status === 'unavailable') continue;
-
-            this._updateDebugStep(entry.name, 'running', `Initiated — scanning ${scanQueue.length} files...`);
-            const t0 = Date.now();
-            try {
-                const result = await entry.scanner.scan(scanQueue);
-                const dur = Date.now() - t0;
-                this._updateDebugStep(entry.name, 'done', `Done — ${result.issues.length} issues in ${dur}ms`);
-                const codeIssues = result.issues.map((i: any) => ({
-                    id: i.id || `${entry.name}-${Math.random().toString(36).slice(2)}`,
-                    title: i.title || '',
-                    description: i.description || '',
-                    severity: i.severity || 'info',
-                    filePath: i.location?.filePath || i.filePath || '',
-                    line: i.location?.line || i.line || 1,
-                    column: i.location?.column || i.column || 1,
-                    category: i.category || 'logic',
-                    source: i.source,
-                    sourceType: i.sourceType,
-                    confidence: i.confidence,
-                    verificationStatus: i.verificationStatus,
-                }));
-                this._issues.push(...codeIssues);
-            } catch (error: any) {
-                const dur = Date.now() - t0;
-                this._updateDebugStep(entry.name, 'failed', `Failed — ${error?.message ?? error} (${dur}ms)`);
+            if (!available) {
+                this._addDebugStep(scanner.name, scanner.name, 'unavailable', 'Not installed');
+                continue;
             }
-            await this._debugPause();
-            if (token.isCancellationRequested) return;
-        }
 
-        // ── Phase 3: Agent scanners — quick probe, skip full scan ──
-        this._debugPhase = 'agents';
-        const probeFile = scanQueue[0] || process.cwd();
-        for (const entry of toRun) {
-            if (!entry.scanner || entry.scanner.scanKind !== 'agent') continue;
-            if (token.isCancellationRequested) return;
+            ran++;
 
-            const step = this._debugSteps.find(s => s.id === entry.name);
-            if (!step || step.status === 'unavailable') continue;
-
-            this._updateDebugStep(entry.name, 'running', 'Starting agent with random prompt...');
-            const t0 = Date.now();
-            try {
-                const scanPromise = entry.scanner.scanFile(probeFile);
-                const result = await Promise.race([
-                    scanPromise.then(issues => ({ kind: 'done' as const, issues })),
-                    new Promise<{ kind: 'timeout' }>(resolve =>
-                        setTimeout(() => resolve({ kind: 'timeout' }), 8000)
-                    ),
-                ]);
-                const dur = Date.now() - t0;
-                if (result.kind === 'timeout') {
-                    this._updateDebugStep(entry.name, 'working', `Agent processing sample file (${dur}ms) — debug mode continuing`);
-                } else {
-                    this._updateDebugStep(entry.name, 'done', `Done — ${result.issues.length} issues in ${dur}ms (debug: quick probe)`);
+            if (scanner.scanKind !== 'agent') {
+                this._addDebugStep(scanner.name, scanner.name, 'running', 'Started');
+                try {
+                    const result = await scanner.scan(scanQueue);
+                    const dur = Date.now() - t0;
+                    this._updateDebugStep(scanner.name, 'done', `Closed — ${result.issues.length} issues in ${dur}ms`);
+                    const codeIssues = result.issues.map((i: any) => ({
+                        id: i.id || `${scanner.name}-${Math.random().toString(36).slice(2)}`,
+                        title: i.title || '',
+                        description: i.description || '',
+                        severity: i.severity || 'info',
+                        filePath: i.location?.filePath || i.filePath || '',
+                        line: i.location?.line || i.line || 1,
+                        column: i.location?.column || i.column || 1,
+                        category: i.category || 'logic',
+                        source: i.source,
+                        sourceType: i.sourceType,
+                        confidence: i.confidence,
+                        verificationStatus: i.verificationStatus,
+                    }));
+                    this._issues.push(...codeIssues);
+                } catch (error: any) {
+                    const dur = Date.now() - t0;
+                    this._updateDebugStep(scanner.name, 'failed', `Failed — ${error?.message ?? error} (${dur}ms)`);
                 }
-            } catch (error: any) {
-                const dur = Date.now() - t0;
-                this._updateDebugStep(entry.name, 'failed', `Failed — ${error?.message ?? error} (${dur}ms)`);
+            } else {
+                this._addDebugStep(scanner.name, scanner.name, 'running', 'Started');
+                try {
+                    const scanPromise = scanner.scanFile(probeFile);
+                    const result = await Promise.race([
+                        scanPromise.then(issues => ({ kind: 'done' as const, issues })),
+                        new Promise<{ kind: 'timeout' }>(resolve =>
+                            setTimeout(() => resolve({ kind: 'timeout' }), 8000)
+                        ),
+                    ]);
+                    const dur = Date.now() - t0;
+                    if (result.kind === 'timeout') {
+                        this._updateDebugStep(scanner.name, 'working', `Closed — initiated correctly (${dur}ms)`);
+                    } else {
+                        this._updateDebugStep(scanner.name, 'done', `Closed — ${result.issues.length} issues in ${dur}ms`);
+                    }
+                } catch (error: any) {
+                    const dur = Date.now() - t0;
+                    this._updateDebugStep(scanner.name, 'failed', `Failed — ${error?.message ?? error} (${dur}ms)`);
+                }
             }
-            await this._debugPause();
-            if (token.isCancellationRequested) return;
         }
 
         this._debugPhase = 'complete';
-        this._addDebugStep('complete', 'Scan complete', 'done', `${this._issues.length} total issues`);
-        await this._debugPause();
+        if (ran === 0) {
+            this._addDebugStep('complete', 'Done', 'done', 'Nothing to run — all scanners skipped or unavailable');
+        } else {
+            this._addDebugStep('complete', 'Done', 'done', `${this._issues.length} total issues from ${ran} scanner(s)`);
+        }
     }
 
     /**
@@ -963,17 +927,8 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         this._postMessage({
             type: 'debugStatus',
             steps: this._debugSteps,
-            paused: this._debugPaused,
+            paused: false,
             phase: this._debugPhase,
-        });
-    }
-
-    private async _debugPause(): Promise<void> {
-        if (!this._debugMode) return;
-        this._debugPaused = true;
-        this._sendDebugStatus();
-        return new Promise<void>(resolve => {
-            this._debugResolve = resolve;
         });
     }
 

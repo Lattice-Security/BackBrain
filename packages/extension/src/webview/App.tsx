@@ -179,7 +179,6 @@ const App = () => {
     const [expandedSpec, setExpandedSpec] = useState<Record<string, boolean>>({});
     const [debugMode, setDebugMode] = useState(false);
     const [debugSteps, setDebugSteps] = useState<DebugStep[]>([]);
-    const [debugPaused, setDebugPaused] = useState(false);
     const [debugPhase, setDebugPhase] = useState('');
 
     useEffect(() => {
@@ -279,9 +278,7 @@ const App = () => {
                     break;
                 case 'debugStatus':
                     setDebugSteps(message.steps);
-                    setDebugPaused(message.paused);
                     setDebugPhase(message.phase);
-                    setLoading(true);
                     break;
             }
         };
@@ -367,7 +364,6 @@ const App = () => {
                                 const next = !debugMode;
                                 setDebugMode(next);
                                 setDebugSteps([]);
-                                setDebugPaused(false);
                                 vscode.postMessage({ type: 'setDebugMode', enabled: next });
                             }}
                             title={debugMode ? 'Disable debug mode' : 'Enable debug mode'}
@@ -410,15 +406,6 @@ const App = () => {
                                         </div>
                                     ))}
                                 </div>
-                                {debugPaused && (
-                                    <button
-                                        className="bb-start-button"
-                                        onClick={() => vscode.postMessage({ type: 'debugContinue' })}
-                                        style={{ marginTop: '10px' }}
-                                    >
-                                        Continue
-                                    </button>
-                                )}
                             </section>
                         ) : loading && (
                             <section className="bb-progress-card">

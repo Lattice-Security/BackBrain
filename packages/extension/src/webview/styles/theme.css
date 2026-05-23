@@ -1,3 +1,8 @@
+@keyframes bb-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
 :root {
     --bb-font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
     --bb-font-family-mono: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
@@ -486,12 +491,14 @@ button {
     flex-shrink: 0;
 }
 
-.bb-debug-dot--pending   { background: var(--bb-color-panel-strong); }
-.bb-debug-dot--ready     { background: var(--bb-color-link); }
-.bb-debug-dot--running   { background: var(--bb-color-link); box-shadow: 0 0 4px var(--bb-color-link); }
-.bb-debug-dot--done      { background: var(--bb-color-success); }
-.bb-debug-dot--failed    { background: var(--bb-color-error); }
-.bb-debug-dot--unavailable { background: var(--bb-color-warning); }
+.bb-debug-dot--pending      { background: var(--bb-color-panel-strong); }
+.bb-debug-dot--ready        { background: var(--bb-color-link); }
+.bb-debug-dot--running      { background: var(--bb-color-link); box-shadow: 0 0 4px var(--bb-color-link); }
+.bb-debug-dot--done         { background: var(--bb-color-success); }
+.bb-debug-dot--failed       { background: var(--bb-color-error); }
+.bb-debug-dot--unavailable  { background: var(--bb-color-warning); }
+.bb-debug-dot--working      { background: var(--bb-color-success); box-shadow: 0 0 4px var(--bb-color-success); animation: bb-pulse 1s ease-in-out infinite; }
+.bb-debug-dot--skipped      { background: var(--bb-color-panel-strong); opacity: 0.5; }
 
 .bb-debug-label {
     color: var(--bb-color-foreground);
@@ -502,6 +509,8 @@ button {
 .bb-debug-step--unavailable .bb-debug-label { color: var(--bb-color-warning); }
 .bb-debug-step--failed .bb-debug-label      { color: var(--bb-color-error); }
 .bb-debug-step--done .bb-debug-label        { color: var(--bb-color-success); }
+.bb-debug-step--working .bb-debug-label     { color: var(--bb-color-success); }
+.bb-debug-step--skipped .bb-debug-label     { opacity: 0.6; }
 
 .bb-debug-msg {
     color: var(--bb-color-muted);
