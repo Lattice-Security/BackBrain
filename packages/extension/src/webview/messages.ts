@@ -54,7 +54,9 @@ export type WebviewMessage =
     | { type: 'revertFix'; sessionId: string }
     | { type: 'batchFix' }
     | { type: 'requestFixHistory' }
-    | { type: 'exportReport' };
+    | { type: 'exportReport' }
+    | { type: 'setDebugMode'; enabled: boolean }
+    | { type: 'debugContinue' };
 
 // ============================================================================
 // Extension → Webview Messages
@@ -65,7 +67,7 @@ export type ExtensionMessage =
     | { type: 'scanComplete'; issues: IssueData[] }
     | { type: 'scanError'; error: string }
     | { type: 'statusUpdate'; level: 'info' | 'warn' | 'error'; message: string }
-    | { type: 'scanStatus'; phase: SecurityScanPhase; level: 'info' | 'warn' | 'error'; message: string; backend?: string; scanner?: string; degraded?: boolean }
+    | { type: 'scanStatus'; phase: SecurityScanPhase; level: 'info' | 'warn' | 'error'; message: string; backend?: string; scanner?: string; degraded?: boolean; agents?: string[] }
     | { type: 'statusClear' }
     | { type: 'configurationState'; state: ConfigurationState }
     | { type: 'issuesUpdated'; issues: IssueData[]; batchInfo?: { current: number; total: number } }
@@ -79,7 +81,8 @@ export type ExtensionMessage =
     | { type: 'fixReverted'; sessionId: string }
     | { type: 'fixHistory'; sessions: FixSessionData[] }
     | { type: 'fixError'; error: string }
-    | { type: 'fixSuggested'; issueId: string; fix: FixData };
+    | { type: 'fixSuggested'; issueId: string; fix: FixData }
+    | { type: 'debugStatus'; steps: DebugStep[]; paused: boolean; phase: string };
 
 // ============================================================================
 // Configuration Data
@@ -113,6 +116,22 @@ export interface ConfigurationState {
     agentReviewEnabled: boolean;
     scanDepth: AgentScanDepth;
     scanDepthLabel: string;
+    /** Display name of the active AI provider (e.g. "OpenAI gpt-4o") */
+    activeProvider?: string;
+}
+
+// ============================================================================
+// Debug Mode Types
+// ============================================================================
+
+export type DebugStepStatus = 'pending' | 'ready' | 'running' | 'done' | 'failed' | 'unavailable';
+
+export interface DebugStep {
+    id: string;
+    label: string;
+    status: DebugStepStatus;
+    message?: string;
+    duration?: number;
 }
 
 // ============================================================================

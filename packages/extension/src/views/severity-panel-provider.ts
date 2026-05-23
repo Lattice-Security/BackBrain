@@ -6,6 +6,7 @@ import {
     type AgentBackendId,
     type AgentScanDepth,
     type ConfigurationState,
+    type DebugStep,
     type ScanTarget,
     type WebviewMessage,
     type IssueData,
@@ -50,6 +51,7 @@ const AGENT_BACKENDS: Record<AgentBackendId, { label: string; description: strin
     },
 };
 
+
 const SCAN_DEPTH_LABELS: Record<AgentScanDepth, string> = {
     developer: 'Developer Scan',
     team: 'Team Scan',
@@ -68,6 +70,13 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private _lastBatchProgress: { current: number; total: number } | null = null;
     private _scanCancelTokenSource?: vscode.CancellationTokenSource;
     private _scanDepthTierLabel: string = 'Developer Scan';
+    private _cachedScannerStatuses: any[] | null = null;
+    private _cachedAgentBackendStates: any[] | null = null;
+    private _debugMode = false;
+    private _debugSteps: DebugStep[] = [];
+    private _debugPaused = false;
+    private _debugPhase = '';
+    private _debugResolve: (() => void) | null = null;
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
@@ -122,8 +131,27 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         this._postMessage({ type: 'scanStatus', ...update });
     }
 
-    public async syncConfigurationState(): Promise<void> {
-        this._postMessage({ type: 'configurationState', state: await this._getConfigurationState() });
+    public async syncConfigurationState(forceRefresh: boolean = false): Promise<void> {
+        try {
+            this._postMessage({ type: 'configurationState', state: await this._getConfigurationState(forceRefresh) });
+        } catch (error) {
+            logger.error('Failed to sync configuration state', { error });
+            const config = vscode.workspace.getConfiguration('backbrain');
+            const scanDepth = config.get<AgentScanDepth>('ai.agentScanDepth', 'developer');
+            this._postMessage({
+                type: 'configurationState',
+                state: {
+                    scanners: DEFAULT_ENABLED_SCANNERS.map(scannerId => {
+                        const metadata = SCANNER_METADATA[scannerId]!;
+                        return { id: scannerId, label: metadata.label, description: metadata.description, enabled: true, available: false };
+                    }),
+                    agentBackends: [],
+                    agentReviewEnabled: false,
+                    scanDepth,
+                    scanDepthLabel: SCAN_DEPTH_LABELS[scanDepth],
+                },
+            });
+        }
     }
 
     public async startWorkspaceScan(): Promise<void> {
@@ -147,12 +175,27 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         return scannerNames;
     }
 
-    private async _getConfigurationState(): Promise<ConfigurationState> {
+    private async _getConfigurationState(forceRefresh: boolean = false): Promise<ConfigurationState> {
         const config = vscode.workspace.getConfiguration('backbrain');
         const enabledScanners = new Set(this._getEnabledScannerIds());
-        const scannerStatuses = await this._securityService.getScannerStatuses();
-        const statusMap = new Map(scannerStatuses.map(status => [status.id, status]));
+        
+        if (forceRefresh || !this._cachedScannerStatuses) {
+            this._cachedScannerStatuses = await this._securityService.getScannerStatuses();
+        }
+        const statusMap = new Map(this._cachedScannerStatuses.map(status => [status.id, status]));
         const scanDepth = config.get<AgentScanDepth>('ai.agentScanDepth', 'developer');
+
+        // Build a human-readable provider label from whatever is currently active
+        const activeProviderName = getActiveProvider();
+        const configuredModel = config.get<string>('ai.model', '').trim();
+        const configuredProvider = config.get<string>('ai.provider', '');
+        const activeProvider = activeProviderName
+            ? `${activeProviderName}${configuredModel ? ' · ' + configuredModel : ''}`
+            : configuredProvider || undefined;
+
+        if (forceRefresh || !this._cachedAgentBackendStates) {
+            this._cachedAgentBackendStates = await this._getAgentBackendStates();
+        }
 
         return {
             scanners: DEFAULT_ENABLED_SCANNERS.map(scannerId => {
@@ -165,10 +208,15 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                     available: statusMap.get(scannerId)?.available ?? false,
                 };
             }),
-            agentBackends: await this._getAgentBackendStates(),
+            agentBackends: this._cachedAgentBackendStates.map(backend => ({
+                ...backend,
+                enabled: new Set(config.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode'])).has(backend.id),
+                preferred: config.get<AgentBackendId>('ai.agentPreferredBackend', 'codex') === backend.id,
+            })),
             agentReviewEnabled: config.get<boolean>('ai.agentReviewEnabled', false),
             scanDepth,
             scanDepthLabel: SCAN_DEPTH_LABELS[scanDepth],
+            ...(activeProvider ? { activeProvider } : {}),
         };
     }
 
@@ -227,7 +275,21 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     }
 
     private async _updateConfiguration<T>(key: string, value: T): Promise<void> {
-        await vscode.workspace.getConfiguration('backbrain').update(key, value, vscode.ConfigurationTarget.Workspace);
+        const hasWorkspace = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
+        const target = hasWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+        try {
+            await vscode.workspace.getConfiguration('backbrain').update(key, value, target);
+        } catch (error) {
+            logger.error(`Failed to update configuration key ${key} with target ${target}`, { error });
+            // Fallback to Global
+            try {
+                await vscode.workspace.getConfiguration('backbrain').update(key, value, vscode.ConfigurationTarget.Global);
+            } catch (err) {
+                logger.error(`Failed to update configuration key ${key} globally as fallback`, { error: err });
+            }
+        }
+        // Wait 100ms to allow VS Code configuration registry to flush and update before syncing
+        await new Promise(resolve => setTimeout(resolve, 100));
         await this.syncConfigurationState();
     }
 
@@ -310,7 +372,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                     break;
 
                 case 'refreshConfiguration':
-                    await this.syncConfigurationState();
+                    await this.syncConfigurationState(true);
                     break;
 
                 case 'updateScannerSelection':
@@ -361,6 +423,25 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
 
                 case 'exportReport':
                     await vscode.commands.executeCommand('backbrain.generateReport');
+                    break;
+
+                case 'setDebugMode':
+                    this._debugMode = message.enabled;
+                    if (!message.enabled) {
+                        this._debugSteps = [];
+                        this._debugPaused = false;
+                        this._debugPhase = '';
+                        this._debugResolve = null;
+                    }
+                    break;
+
+                case 'debugContinue':
+                    this._debugPaused = false;
+                    this._sendDebugStatus();
+                    if (this._debugResolve) {
+                        this._debugResolve();
+                        this._debugResolve = null;
+                    }
                     break;
             }
         });
@@ -507,39 +588,167 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        for (let i = 0; i < totalFiles; i += batchSize) {
-            if (token.isCancellationRequested) break;
+        if (this._debugMode) {
+            await this._runDebugScan(scanQueue, selectedScanners, token);
+        } else {
+            for (let i = 0; i < totalFiles; i += batchSize) {
+                if (token.isCancellationRequested) break;
 
-            const batch = scanQueue.slice(i, i + batchSize);
-            const batchStartTime = Date.now();
+                const batch = scanQueue.slice(i, i + batchSize);
+                const batchStartTime = Date.now();
 
-            const results = await this._securityService.scan(batch, {
-                scanners: selectedScanners,
-                onStatus: (update) => this.updateScanStatus(update),
-            });
+                const results = await this._securityService.scan(batch, {
+                    scanners: selectedScanners,
+                    onStatus: (update) => this.updateScanStatus(update),
+                });
 
-            const newIssues = results.issues.map(toIssueData);
-            this._issues.push(...newIssues);
+                const newIssues = results.issues.map(toIssueData);
+                this._issues.push(...newIssues);
 
-            scannedCount += batch.length;
-            const batchDuration = Date.now() - batchStartTime;
+                scannedCount += batch.length;
+                const batchDuration = Date.now() - batchStartTime;
 
-            logger.debug(`Batch ${Math.floor(i / batchSize) + 1} complete: ${batch.length} files in ${batchDuration}ms`);
+                logger.debug(`Batch ${Math.floor(i / batchSize) + 1} complete: ${batch.length} files in ${batchDuration}ms`);
 
-            this._postMessage({
-                type: 'issuesUpdated',
-                issues: newIssues,
-                batchInfo: { current: scannedCount, total: totalFiles }
-            });
-            this._lastBatchProgress = { current: scannedCount, total: totalFiles };
+                this._postMessage({
+                    type: 'issuesUpdated',
+                    issues: newIssues,
+                    batchInfo: { current: scannedCount, total: totalFiles }
+                });
+                this._lastBatchProgress = { current: scannedCount, total: totalFiles };
 
-            await new Promise(resolve => setTimeout(resolve, 5));
+                await new Promise(resolve => setTimeout(resolve, 5));
+            }
         }
 
         const totalDuration = Date.now() - startTime;
         logger.info('Scan complete', { target, issues: this._issues.length, durationMs: totalDuration });
         this.setStatus('info', `Scan complete: ${this._issues.length} issue(s) found in ${Math.round(totalDuration / 100) / 10}s.`);
         this._postMessage({ type: 'scanComplete', issues: this._issues });
+    }
+
+    private async _runDebugScan(
+        scanQueue: string[],
+        selectedScanners: string[],
+        token: vscode.CancellationToken,
+    ): Promise<void> {
+        this._debugSteps = [];
+        this._debugPhase = 'init';
+        this._addDebugStep('init', 'Scan initialised', 'done', `${scanQueue.length} files to scan`);
+
+        // ── Phase 1: Check scanner availability ──
+        this._debugPhase = 'availability';
+        const allScanners = this._securityService.getScanners();
+        const toRun: Array<{ name: string; scanner: import('@backbrain/core').SecurityScanner | undefined }> = [];
+
+        for (const name of selectedScanners) {
+            const scanner = allScanners.find(s => s.name === name);
+            toRun.push({ name, scanner });
+            this._addDebugStep(name, name, 'pending');
+        }
+        await this._debugPause();
+        if (token.isCancellationRequested) return;
+
+        for (const entry of toRun) {
+            this._updateDebugStep(entry.name, 'running', 'Checking availability...');
+            if (!entry.scanner) {
+                this._updateDebugStep(entry.name, 'unavailable', 'Scanner not registered');
+                await this._debugPause();
+                if (token.isCancellationRequested) return;
+                continue;
+            }
+            let available = false;
+            try {
+                available = await entry.scanner.isAvailable();
+            } catch { /* unavailable */ }
+            this._updateDebugStep(entry.name, available ? 'ready' : 'unavailable', available ? 'Available' : 'Not installed');
+            await this._debugPause();
+            if (token.isCancellationRequested) return;
+        }
+
+        // ── Phase 2: Run deterministic scanners one at a time ──
+        this._debugPhase = 'deterministic';
+        for (const entry of toRun) {
+            if (!entry.scanner || entry.scanner.scanKind === 'agent') continue;
+            if (token.isCancellationRequested) return;
+
+            const step = this._debugSteps.find(s => s.id === entry.name);
+            if (!step || step.status === 'unavailable') continue;
+
+            this._updateDebugStep(entry.name, 'running', `Initiated — scanning ${scanQueue.length} files...`);
+            const t0 = Date.now();
+            try {
+                const result = await entry.scanner.scan(scanQueue);
+                const dur = Date.now() - t0;
+                this._updateDebugStep(entry.name, 'done', `Done — ${result.issues.length} issues in ${dur}ms`);
+                const codeIssues = result.issues.map((i: any) => ({
+                    id: i.id || `${entry.name}-${Math.random().toString(36).slice(2)}`,
+                    title: i.title || '',
+                    description: i.description || '',
+                    severity: i.severity || 'info',
+                    filePath: i.location?.filePath || i.filePath || '',
+                    line: i.location?.line || i.line || 1,
+                    column: i.location?.column || i.column || 1,
+                    category: i.category || 'logic',
+                    source: i.source,
+                    sourceType: i.sourceType,
+                    confidence: i.confidence,
+                    verificationStatus: i.verificationStatus,
+                }));
+                this._issues.push(...codeIssues);
+            } catch (error: any) {
+                const dur = Date.now() - t0;
+                this._updateDebugStep(entry.name, 'failed', `Failed — ${error?.message ?? error} (${dur}ms)`);
+            }
+            await this._debugPause();
+            if (token.isCancellationRequested) return;
+        }
+
+        // ── Phase 3: Agent scanners ──
+        this._debugPhase = 'agents';
+        for (const entry of toRun) {
+            if (!entry.scanner || entry.scanner.scanKind !== 'agent') continue;
+            if (token.isCancellationRequested) return;
+
+            const step = this._debugSteps.find(s => s.id === entry.name);
+            if (!step || step.status === 'unavailable') continue;
+
+            this._updateDebugStep(entry.name, 'running', 'Initiating agent review...');
+            const t0 = Date.now();
+            try {
+                const deterministicIssues: any[] = [];
+                const agentContext: any = { deterministicIssues, requestedPaths: scanQueue };
+                const result = entry.scanner.scanWithContext
+                    ? await entry.scanner.scanWithContext(scanQueue, agentContext)
+                    : await entry.scanner.scan(scanQueue);
+                const dur = Date.now() - t0;
+                this._updateDebugStep(entry.name, 'done', `Done — ${result.issues.length} issues in ${dur}ms`);
+                const codeIssues = result.issues.map((i: any) => ({
+                    id: i.id || `${entry.name}-${Math.random().toString(36).slice(2)}`,
+                    title: i.title || '',
+                    description: i.description || '',
+                    severity: i.severity || 'info',
+                    filePath: i.location?.filePath || i.filePath || '',
+                    line: i.location?.line || i.line || 1,
+                    column: i.location?.column || i.column || 1,
+                    category: i.category || 'logic',
+                    source: i.source,
+                    sourceType: i.sourceType,
+                    confidence: i.confidence,
+                    verificationStatus: i.verificationStatus,
+                }));
+                this._issues.push(...codeIssues);
+            } catch (error: any) {
+                const dur = Date.now() - t0;
+                this._updateDebugStep(entry.name, 'failed', `Failed — ${error?.message ?? error} (${dur}ms)`);
+            }
+            await this._debugPause();
+            if (token.isCancellationRequested) return;
+        }
+
+        this._debugPhase = 'complete';
+        this._addDebugStep('complete', 'Scan complete', 'done', `${this._issues.length} total issues`);
+        await this._debugPause();
     }
 
     /**
@@ -738,6 +947,42 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         if (this._view) {
             this._view.webview.postMessage(message);
         }
+    }
+
+    // ── Debug mode helpers ────────────────────────────────────────────
+
+    private _addDebugStep(id: string, label: string, status: DebugStep['status'], msg?: string): void {
+        const step: DebugStep = { id, label, status };
+        if (msg !== undefined) step.message = msg;
+        this._debugSteps.push(step);
+        this._sendDebugStatus();
+    }
+
+    private _updateDebugStep(id: string, status: DebugStep['status'], msg?: string): void {
+        const step = this._debugSteps.find(s => s.id === id);
+        if (step) {
+            step.status = status;
+            if (msg !== undefined) step.message = msg;
+        }
+        this._sendDebugStatus();
+    }
+
+    private _sendDebugStatus(): void {
+        this._postMessage({
+            type: 'debugStatus',
+            steps: this._debugSteps,
+            paused: this._debugPaused,
+            phase: this._debugPhase,
+        });
+    }
+
+    private async _debugPause(): Promise<void> {
+        if (!this._debugMode) return;
+        this._debugPaused = true;
+        this._sendDebugStatus();
+        return new Promise<void>(resolve => {
+            this._debugResolve = resolve;
+        });
     }
 
     private _syncStateToWebview(): void {
