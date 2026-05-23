@@ -635,34 +635,47 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
 
         const allScanners = this._securityService.getScanners();
         const probeFile = scanQueue[0] || process.cwd();
-        let ran = 0;
-
         this._debugPhase = 'running';
 
+        // ── Pass 1: add all scanner entries immediately, then check availability in parallel ──
+        const selected: Array<typeof allScanners[number]> = [];
         for (const scanner of allScanners) {
+            if (selectedScanners.includes(scanner.name)) {
+                selected.push(scanner);
+                this._addDebugStep(scanner.name, scanner.name, 'running', 'Checking...');
+            } else {
+                this._addDebugStep(scanner.name, scanner.name, 'skipped', 'Skipped — not selected');
+            }
+        }
+
+        const availabilityResults = await Promise.all(
+            selected.map(async (scanner) => {
+                if (token.isCancellationRequested) return { scanner, available: false };
+                try {
+                    const available = await scanner.isAvailable();
+                    return { scanner, available };
+                } catch {
+                    return { scanner, available: false };
+                }
+            })
+        );
+
+        let ran = 0;
+
+        // ── Pass 2: update availability, then run each scanner ──
+        for (const { scanner, available } of availabilityResults) {
             if (token.isCancellationRequested) return;
 
-            const isSelected = selectedScanners.includes(scanner.name);
-
-            if (!isSelected) {
-                this._addDebugStep(scanner.name, scanner.name, 'skipped', 'Skipped — not selected');
-                continue;
-            }
-
-            const t0 = Date.now();
-            let available = false;
-            try {
-                available = await scanner.isAvailable();
-            } catch { /* unavailable */ }
             if (!available) {
-                this._addDebugStep(scanner.name, scanner.name, 'unavailable', 'Not installed');
+                this._updateDebugStep(scanner.name, 'unavailable', 'Not installed');
                 continue;
             }
 
             ran++;
+            const t0 = Date.now();
+            this._updateDebugStep(scanner.name, 'running', 'Started');
 
             if (scanner.scanKind !== 'agent') {
-                this._addDebugStep(scanner.name, scanner.name, 'running', 'Started');
                 try {
                     const result = await scanner.scan(scanQueue);
                     const dur = Date.now() - t0;
@@ -687,7 +700,6 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                     this._updateDebugStep(scanner.name, 'failed', `Failed — ${error?.message ?? error} (${dur}ms)`);
                 }
             } else {
-                this._addDebugStep(scanner.name, scanner.name, 'running', 'Started');
                 try {
                     const scanPromise = scanner.scanFile(probeFile);
                     const result = await Promise.race([
