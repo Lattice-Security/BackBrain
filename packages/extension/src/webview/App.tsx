@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import {
     provideVSCodeDesignSystem,
     vsCodeButton,
@@ -9,6 +9,8 @@ import type {
     AgentBackendId,
     AgentScanDepth,
     ConfigurationState,
+    DebugStep,
+    DebugStepStatus,
     ExtensionMessage,
     FixData,
     IssueData,
@@ -27,15 +29,66 @@ type ExplanationState = {
     provider: string | null;
 };
 
+type IconName =
+    | 'alert'
+    | 'bot'
+    | 'check'
+    | 'chevronDown'
+    | 'circle'
+    | 'file'
+    | 'folder'
+    | 'gitDiff'
+    | 'play'
+    | 'refresh'
+    | 'search'
+    | 'settings'
+    | 'shield'
+    | 'sliders'
+    | 'spark'
+    | 'users'
+    | 'x'
+    | 'zap';
+
 type TabId = 'scan' | 'issues' | 'agents';
 type SortMethod = 'severity' | 'filename';
 type FilterMethod = 'all' | 'ai' | 'deterministic';
 
-const SCAN_TARGETS: Array<{ id: ScanTarget; label: string; description: string; icon: string }> = [
-    { id: 'file', label: 'Current file', description: 'Active editor only', icon: 'F' },
-    { id: 'workspace', label: 'Workspace', description: 'All project files', icon: 'W' },
-    { id: 'changed', label: 'Changed files', description: 'Git diff vs HEAD', icon: 'D' },
-    { id: 'custom', label: 'Custom path', description: 'Pick files or folders', icon: 'P' },
+const ICON_PATHS: Record<IconName, string[]> = {
+    alert: ['M12 9v4', 'M12 17h.01', 'M10.3 3.9 2.4 17.5A2 2 0 0 0 4.1 20h15.8a2 2 0 0 0 1.7-2.5L13.7 3.9a2 2 0 0 0-3.4 0Z'],
+    bot: ['M12 8V4H8', 'M8 4h8', 'M16 4h-4', 'M6 10h12a2 2 0 0 1 2 2v5a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-5a2 2 0 0 1 2-2Z', 'M9 15h.01', 'M15 15h.01'],
+    check: ['M20 6 9 17l-5-5'],
+    chevronDown: ['m6 9 6 6 6-6'],
+    circle: ['M12 12h.01'],
+    file: ['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z', 'M14 2v6h6', 'M9 15h6'],
+    folder: ['M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z'],
+    gitDiff: ['M6 3v12', 'M6 15l-3-3', 'M6 15l3-3', 'M18 21V9', 'M18 9l-3 3', 'M18 9l3 3', 'M6 3h6a3 3 0 0 1 3 3v0'],
+    play: ['M5 3l14 9-14 9Z'],
+    refresh: ['M21 12a9 9 0 0 1-15.5 6.2L3 16', 'M3 21v-5h5', 'M3 12A9 9 0 0 1 18.5 5.8L21 8', 'M21 3v5h-5'],
+    search: ['M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z', 'M16 16l5 5'],
+    settings: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z', 'M3 12h2', 'M19 12h2', 'M12 3v2', 'M12 19v2', 'M5.6 5.6 7 7', 'M16.9 16.9l1.5 1.5', 'M18.4 5.6l-1.5 1.5', 'M7.1 16.9l-1.5 1.5'],
+    shield: ['M12 2 4.5 5.4v5.7c0 4.6 3.1 8.8 7.5 10.1 4.4-1.3 7.5-5.5 7.5-10.1V5.4Z', 'M9 12l2 2 4-5'],
+    sliders: ['M4 6h8', 'M16 6h4', 'M14 4v4', 'M4 12h4', 'M12 12h8', 'M10 10v4', 'M4 18h10', 'M18 18h2', 'M16 16v4'],
+    spark: ['M12 2l1.5 5 5 1.5-5 1.5-1.5 5-1.5-5-5-1.5 5-1.5Z', 'M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8Z'],
+    users: ['M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2', 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', 'M22 21v-2a4 4 0 0 0-3-3.9', 'M16 3.1a4 4 0 0 1 0 7.8'],
+    x: ['M18 6 6 18', 'M6 6l12 12'],
+    zap: ['M13 2 3 14h8l-1 8 11-13h-8Z'],
+};
+
+function Icon({ name, className }: { name: IconName; className?: string }) {
+    return (
+        <svg className={className ? `bb-icon ${className}` : 'bb-icon'} viewBox="0 0 24 24" aria-hidden="true">
+            {ICON_PATHS[name].map((d, index) => (
+                <path key={index} d={d} />
+            ))}
+        </svg>
+    );
+}
+
+const SCAN_TARGETS: Array<{ id: ScanTarget; label: string; description: string; icon: IconName }> = [
+    { id: 'file', label: 'Current file', description: 'Active editor only', icon: 'file' },
+    { id: 'workspace', label: 'Workspace', description: 'All project files', icon: 'folder' },
+    { id: 'changed', label: 'Changed files', description: 'Git diff vs HEAD', icon: 'gitDiff' },
+    { id: 'custom', label: 'Custom path', description: 'Pick files or folders', icon: 'sliders' },
 ];
 
 const DEPTHS: Array<{ id: AgentScanDepth; label: string; detail: string }> = [
@@ -90,15 +143,6 @@ const defaultConfiguration: ConfigurationState = {
     scanDepthLabel: 'Developer Scan',
 };
 
-const ALL_SPECIALISTS = [
-    { name: 'AI Orchestration Security', focus: 'prompt injection, sandbox escape' },
-    { name: 'CLI Credential Auditor', focus: 'credential handling, auth flows' },
-    { name: 'System Call Sentinel', focus: 'command injection, subprocess execution' },
-    { name: 'Data Flow Inspector', focus: 'data leakage, logging exposure' },
-    { name: 'Access Control Auditor', focus: 'path traversal, file permissions' },
-    { name: 'Dependency Integrity Agent', focus: 'version safety, library imports' },
-];
-
 const getDepthAgentCount = (depth: AgentScanDepth): number => {
     switch (depth) {
         case 'developer': return 2;
@@ -126,9 +170,17 @@ const App = () => {
     const [explanations, setExplanations] = useState<Record<string, ExplanationState>>({});
     const [activeTab, setActiveTab] = useState<TabId>('scan');
     const [selectedTarget, setSelectedTarget] = useState<ScanTarget>('workspace');
+    const selectedTargetRef = useRef(selectedTarget);
+    useEffect(() => {
+        selectedTargetRef.current = selectedTarget;
+    }, [selectedTarget]);
     const [sortMethod, setSortMethod] = useState<SortMethod>('severity');
     const [filterMethod, setFilterMethod] = useState<FilterMethod>('all');
     const [expandedSpec, setExpandedSpec] = useState<Record<string, boolean>>({});
+    const [debugMode, setDebugMode] = useState(false);
+    const [debugSteps, setDebugSteps] = useState<DebugStep[]>([]);
+    const [debugPaused, setDebugPaused] = useState(false);
+    const [debugPhase, setDebugPhase] = useState('');
 
     useEffect(() => {
         vscode.setState({ issues, scanDepthTier });
@@ -220,10 +272,16 @@ const App = () => {
                     break;
                 case 'fixApplied':
                     setActiveFix(null);
-                    vscode.postMessage({ type: 'requestScan', target: selectedTarget === 'file' ? 'workspace' : selectedTarget });
+                    vscode.postMessage({ type: 'requestScan', target: selectedTargetRef.current === 'file' ? 'workspace' : selectedTargetRef.current });
                     break;
                 case 'fixReverted':
-                    vscode.postMessage({ type: 'requestScan', target: selectedTarget === 'file' ? 'workspace' : selectedTarget });
+                    vscode.postMessage({ type: 'requestScan', target: selectedTargetRef.current === 'file' ? 'workspace' : selectedTargetRef.current });
+                    break;
+                case 'debugStatus':
+                    setDebugSteps(message.steps);
+                    setDebugPaused(message.paused);
+                    setDebugPhase(message.phase);
+                    setLoading(true);
                     break;
             }
         };
@@ -232,7 +290,7 @@ const App = () => {
         vscode.postMessage({ type: 'ready' });
         vscode.postMessage({ type: 'refreshConfiguration' });
         return () => window.removeEventListener('message', handleMessage);
-    }, [selectedTarget]);
+    }, []);
 
     const counts = useMemo(() => {
         return issues.reduce((acc, issue) => {
@@ -299,12 +357,26 @@ const App = () => {
             <div className="bb-shell">
                 <header className="bb-header">
                     <div className="bb-brand">
-                        <span className="bb-brand-icon">B</span>
+                        <span className="bb-brand-icon"><Icon name="shield" /></span>
                         <span>BackBrain</span>
                     </div>
                     <div className="bb-header-actions">
+                        <button
+                            className={`bb-small-button${debugMode ? ' bb-small-button--active' : ''}`}
+                            onClick={() => {
+                                const next = !debugMode;
+                                setDebugMode(next);
+                                setDebugSteps([]);
+                                setDebugPaused(false);
+                                vscode.postMessage({ type: 'setDebugMode', enabled: next });
+                            }}
+                            title={debugMode ? 'Disable debug mode' : 'Enable debug mode'}
+                            style={{ fontSize: '10px', padding: '2px 5px' }}
+                        >
+                            Debug
+                        </button>
                         <button className="bb-icon-button" onClick={() => vscode.postMessage({ type: 'refreshConfiguration' })} title="Refresh availability">
-                            ↻
+                            <Icon name="refresh" />
                         </button>
                     </div>
                 </header>
@@ -316,14 +388,39 @@ const App = () => {
                             className={`bb-tab${activeTab === tab ? ' bb-tab--active' : ''}`}
                             onClick={() => setActiveTab(tab)}
                         >
-                            {tab === 'scan' ? 'Scan' : tab === 'issues' ? 'Issues' : 'Agents'}
+                            <Icon name={tab === 'scan' ? 'play' : tab === 'issues' ? 'shield' : 'users'} />
+                            <span>{tab === 'scan' ? 'Scan' : tab === 'issues' ? 'Issues' : 'Agents'}</span>
                         </button>
                     ))}
                 </nav>
 
                 {activeTab === 'scan' && (
                     <main className="bb-view">
-                        {loading && (
+                        {loading && debugMode && debugSteps.length > 0 ? (
+                            <section className="bb-debug-panel">
+                                <div className="bb-section-title" style={{ padding: '0 0 8px', fontSize: '10px' }}>
+                                    Debug scan — {debugPhase}
+                                </div>
+                                <div className="bb-debug-steps">
+                                    {debugSteps.map(step => (
+                                        <div key={step.id} className={`bb-debug-step bb-debug-step--${step.status}`}>
+                                            <span className={`bb-debug-dot bb-debug-dot--${step.status}`} />
+                                            <span className="bb-debug-label">{step.label}</span>
+                                            {step.message && <span className="bb-debug-msg">{step.message}</span>}
+                                        </div>
+                                    ))}
+                                </div>
+                                {debugPaused && (
+                                    <button
+                                        className="bb-start-button"
+                                        onClick={() => vscode.postMessage({ type: 'debugContinue' })}
+                                        style={{ marginTop: '10px' }}
+                                    >
+                                        Continue
+                                    </button>
+                                )}
+                            </section>
+                        ) : loading && (
                             <section className="bb-progress-card">
                                 <div className="bb-progress-label">{phaseLabels[currentPhase] ?? scanStatus?.message ?? 'Scanning...'}</div>
                                 <div className="bb-progress-sub">
@@ -349,7 +446,7 @@ const App = () => {
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                                             {(() => {
                                                 const totalAgents = getDepthAgentCount(configuration.scanDepth);
-                                                const specs = ALL_SPECIALISTS.slice(0, totalAgents);
+                                                const agentNames = scanStatus?.agents || [];
                                                 
                                                 if (currentPhase === 'deterministic') {
                                                     return (
@@ -364,12 +461,13 @@ const App = () => {
                                                     return (
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', border: '0.5px solid var(--bb-color-border)', background: 'var(--bb-color-panel-soft)' }}>
                                                             <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--bb-color-link)', flexShrink: 0 }} />
-                                                            <div style={{ fontSize: '11px', color: 'var(--bb-color-foreground)', flex: 1 }}>AI Planner creating specialists...</div>
+                                                            <div style={{ fontSize: '11px', color: 'var(--bb-color-foreground'), flex: 1 }}>AI Planner creating specialists...</div>
                                                         </div>
                                                     );
                                                 }
 
-                                                return specs.map((spec, specIdx) => {
+                                                return Array.from({ length: totalAgents }, (_, specIdx) => {
+                                                    const agentName = agentNames[specIdx] || `Specialist ${specIdx + 1}`;
                                                     let statusColor = 'var(--bb-color-panel-strong)';
                                                     let statusText = 'waiting';
                                                     
@@ -379,8 +477,11 @@ const App = () => {
                                                             statusColor = 'var(--bb-color-success)';
                                                             statusText = 'done';
                                                         } else {
-                                                            // Dynamically mark earlier specialists as done/running
-                                                            if (specIdx === 0) {
+                                                            const currentAgent = parseInt(msg.match(/agent\s+(\d+)/i)?.[1] || '1', 10) - 1;
+                                                            if (specIdx < currentAgent) {
+                                                                statusColor = 'var(--bb-color-success)';
+                                                                statusText = 'done';
+                                                            } else if (specIdx === currentAgent) {
                                                                 statusColor = 'var(--bb-color-link)';
                                                                 statusText = 'running';
                                                             } else {
@@ -394,9 +495,9 @@ const App = () => {
                                                     }
 
                                                     return (
-                                                        <div key={spec.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', border: '0.5px solid var(--bb-color-border)', background: 'var(--bb-color-panel-soft)' }}>
+                                                        <div key={specIdx} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', border: '0.5px solid var(--bb-color-border)', background: 'var(--bb-color-panel-soft)' }}>
                                                             <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: statusColor, flexShrink: 0 }} />
-                                                            <div style={{ fontSize: '11px', color: 'var(--bb-color-foreground)', flex: 1 }}>{spec.name}</div>
+                                                            <div style={{ fontSize: '11px', color: 'var(--bb-color-foreground)', flex: 1 }}>{agentName}</div>
                                                             <span style={{ 
                                                                 fontSize: '10px', 
                                                                 padding: '1px 5px', 
@@ -426,7 +527,7 @@ const App = () => {
                                         onClick={() => setSelectedTarget(target.id)}
                                         disabled={loading}
                                     >
-                                        <span className="bb-card-icon">{target.icon}</span>
+                                        <span className="bb-card-icon"><Icon name={target.icon} /></span>
                                         <span className="bb-card-label">{target.label}</span>
                                         <span className="bb-card-detail">{target.description}</span>
                                     </button>
@@ -440,8 +541,12 @@ const App = () => {
                                 {DEPTHS.map(depth => (
                                     <button
                                         key={depth.id}
+                                        type="button"
                                         className={`bb-depth-card${configuration.scanDepth === depth.id ? ' bb-depth-card--active' : ''}`}
-                                        onClick={() => vscode.postMessage({ type: 'updateScanDepth', depth: depth.id })}
+                                        onClick={() => {
+                                            setConfiguration(prev => ({ ...prev, scanDepth: depth.id, scanDepthLabel: depth.label + ' Scan' }));
+                                            vscode.postMessage({ type: 'updateScanDepth', depth: depth.id });
+                                        }}
                                         disabled={loading}
                                     >
                                         <span className="bb-depth-name">{depth.label}</span>
@@ -472,16 +577,23 @@ const App = () => {
                                     return (
                                         <button
                                             key={scanner.id}
+                                            type="button"
                                             className={pillClass}
                                             onClick={() => {
                                                 if (isUnavailable) return;
+                                                setConfiguration(prev => ({
+                                                    ...prev,
+                                                    scanners: prev.scanners.map(s =>
+                                                        s.id === scanner.id ? { ...s, enabled: !s.enabled } : s
+                                                    ),
+                                                }));
                                                 vscode.postMessage({ type: 'updateScannerSelection', scannerId: scanner.id, enabled: !scanner.enabled });
                                             }}
                                             disabled={loading || isUnavailable}
                                             title={isUnavailable ? `${scanner.label} is not installed` : scanner.description}
                                             aria-pressed={scanner.enabled}
                                         >
-                                            <span className="bb-scanner-pill-dot" />
+                                            <Icon name={isUnavailable ? 'alert' : scanner.enabled ? 'check' : 'circle'} className="bb-scanner-pill-icon" />
                                             {scanner.label}
                                         </button>
                                     );
@@ -491,14 +603,21 @@ const App = () => {
 
                         <section className="bb-section">
                             <div className="bb-section-header" style={{ marginBottom: '8px' }}>
-                                <div className="bb-section-title">AI Agent Review</div>
+                                <div className="bb-section-title bb-section-title--with-icon">
+                                    <Icon name="bot" />
+                                    AI Agent Review
+                                </div>
                                 <label className={`bb-switch ${configuration.agentReviewEnabled ? 'bb-switch--active' : ''}`}>
                                     <input
                                         type="checkbox"
                                         checked={configuration.agentReviewEnabled}
-                                        onChange={event => vscode.postMessage({ type: 'updateAgentReviewEnabled', enabled: event.currentTarget.checked })}
-                                        disabled={loading}
-                                        style={{ display: 'none' }}
+                                                onChange={event => {
+                                                    const enabled = event.currentTarget.checked;
+                                                    setConfiguration(prev => ({ ...prev, agentReviewEnabled: enabled }));
+                                                    vscode.postMessage({ type: 'updateAgentReviewEnabled', enabled });
+                                                }}
+                                                disabled={loading}
+                                                style={{ display: 'none' }}
                                     />
                                     <span className="bb-switch-slider" />
                                 </label>
@@ -506,17 +625,30 @@ const App = () => {
                             {configuration.agentReviewEnabled && (
                                 <div className="bb-toggle-list" style={{ marginTop: '8px' }}>
                                     {configuration.agentBackends.map(backend => (
-                                        <label key={backend.id} className={`bb-toggle-row bb-toggle-row--backend${backend.enabled ? ' bb-toggle-row--enabled' : ''}`}>
+                                        <div key={backend.id} className={`bb-toggle-row bb-toggle-row--backend${backend.enabled ? ' bb-toggle-row--enabled' : ''}`}>
                                             <input
                                                 type="checkbox"
+                                                id={`backend-checkbox-${backend.id}`}
                                                 checked={backend.enabled}
-                                                onChange={event => vscode.postMessage({ type: 'updateAgentBackendSelection', backendId: backend.id as AgentBackendId, enabled: event.currentTarget.checked })}
+                                                onChange={event => {
+                                                    const enabled = event.currentTarget.checked;
+                                                    setConfiguration(prev => ({
+                                                        ...prev,
+                                                        agentBackends: prev.agentBackends.map(b =>
+                                                            b.id === backend.id ? { ...b, enabled } : b
+                                                        ),
+                                                    }));
+                                                    vscode.postMessage({ type: 'updateAgentBackendSelection', backendId: backend.id as AgentBackendId, enabled });
+                                                }}
                                                 disabled={loading}
                                             />
-                                            <span className="bb-toggle-main">
-                                                <span className="bb-toggle-label">{backend.label}</span>
+                                            <label htmlFor={`backend-checkbox-${backend.id}`} className="bb-toggle-main">
+                                                <span className="bb-toggle-label bb-toggle-label--with-icon">
+                                                    <Icon name={backend.id === 'gemini' ? 'spark' : backend.id === 'codex' ? 'bot' : 'zap'} />
+                                                    {backend.label}
+                                                </span>
                                                 <span className="bb-toggle-detail">{backend.description}</span>
-                                            </span>
+                                            </label>
                                             <button
                                                 className={`bb-preferred-button${backend.preferred ? ' bb-preferred-button--active' : ''}`}
                                                 onClick={event => {
@@ -528,9 +660,10 @@ const App = () => {
                                                 {backend.preferred ? 'Preferred' : 'Use first'}
                                             </button>
                                             <span className={`bb-status-pill${backend.available ? ' bb-status-pill--ok' : ' bb-status-pill--off'}`}>
+                                                <Icon name={backend.available ? backend.authenticated === false ? 'alert' : 'check' : 'x'} />
                                                 {backend.available ? backend.authenticated === false ? 'Needs login' : 'Available' : 'Missing'}
                                             </span>
-                                        </label>
+                                        </div>
                                     ))}
                                 </div>
                             )}
@@ -544,6 +677,7 @@ const App = () => {
 
                         <div className="bb-start-row">
                             <button className="bb-start-button" onClick={startScan} disabled={loading}>
+                                <Icon name={loading ? 'refresh' : 'play'} />
                                 {loading ? 'Scanning...' : 'Start scan'}
                             </button>
                         </div>

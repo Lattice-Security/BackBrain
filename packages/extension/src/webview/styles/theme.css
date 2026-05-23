@@ -104,6 +104,17 @@ button {
     color: inherit;
 }
 
+.bb-icon {
+    width: 14px;
+    height: 14px;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    fill: none;
+    flex: 0 0 auto;
+}
+
 .bb-shell {
     min-height: 100vh;
     background: var(--bb-color-panel);
@@ -137,9 +148,12 @@ button {
     border-radius: 50%;
     background: color-mix(in srgb, var(--bb-color-link) 22%, var(--bb-color-panel));
     color: var(--bb-color-link);
-    font-size: 10px;
-    font-weight: var(--bb-font-weight-semibold);
     flex: 0 0 auto;
+}
+
+.bb-brand-icon .bb-icon {
+    width: 12px;
+    height: 12px;
 }
 
 .bb-header-actions {
@@ -160,6 +174,9 @@ button {
 
 .bb-icon-button {
     width: 27px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .bb-small-button {
@@ -171,6 +188,12 @@ button {
 .bb-small-button:hover {
     background: var(--bb-color-panel-strong);
     color: var(--bb-color-foreground);
+}
+
+.bb-small-button--active {
+    background: color-mix(in srgb, var(--bb-color-link) 18%, var(--bb-color-panel));
+    color: var(--bb-color-link);
+    border-color: var(--bb-color-link);
 }
 
 .bb-tab-row {
@@ -190,6 +213,15 @@ button {
     cursor: pointer;
     font-size: 11px;
     font-weight: var(--bb-font-weight-medium);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+}
+
+.bb-tab .bb-icon {
+    width: 13px;
+    height: 13px;
 }
 
 .bb-tab--active {
@@ -273,8 +305,11 @@ button {
     border-radius: 50%;
     background: color-mix(in srgb, var(--bb-color-link) 16%, var(--bb-color-panel));
     color: var(--bb-color-link);
-    font-size: 10px;
-    font-weight: var(--bb-font-weight-semibold);
+}
+
+.bb-card-icon .bb-icon {
+    width: 12px;
+    height: 12px;
 }
 
 .bb-card-label,
@@ -339,6 +374,17 @@ button {
     font-weight: var(--bb-font-weight-medium);
 }
 
+.bb-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.bb-status-pill .bb-icon {
+    width: 10px;
+    height: 10px;
+}
+
 .bb-status-pill--ok {
     color: var(--bb-color-success);
     background: color-mix(in srgb, var(--bb-color-success) 14%, var(--bb-color-panel));
@@ -374,16 +420,12 @@ button {
     color: var(--bb-color-foreground);
 }
 
-/* Dot indicator inside each pill */
-.bb-scanner-pill-dot {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
+.bb-scanner-pill-icon {
+    width: 12px;
+    height: 12px;
     flex-shrink: 0;
-    background: var(--bb-color-muted);
     opacity: 0.5;
-    transition: background var(--bb-transition-fast), opacity var(--bb-transition-fast);
+    transition: opacity var(--bb-transition-fast);
 }
 
 /* Enabled = green */
@@ -393,8 +435,7 @@ button {
     border-color: color-mix(in srgb, var(--bb-color-success) 35%, var(--bb-color-border));
 }
 
-.bb-scanner-pill--enabled .bb-scanner-pill-dot {
-    background: var(--bb-color-success);
+.bb-scanner-pill--enabled .bb-scanner-pill-icon {
     opacity: 1;
 }
 
@@ -407,13 +448,66 @@ button {
     opacity: 0.75;
 }
 
-.bb-scanner-pill--unavailable .bb-scanner-pill-dot {
-    background: var(--bb-color-warning);
+.bb-scanner-pill--unavailable .bb-scanner-pill-icon {
     opacity: 0.8;
 }
 
 .bb-scanner-pill:disabled {
     cursor: not-allowed;
+}
+
+/* ── Debug panel ──────────────────────────────────── */
+
+.bb-debug-panel {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--bb-color-border);
+}
+
+.bb-debug-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.bb-debug-step {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 7px;
+    border-radius: var(--bb-radius-sm);
+    font-size: 11px;
+    background: var(--bb-color-panel-soft);
+}
+
+.bb-debug-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.bb-debug-dot--pending   { background: var(--bb-color-panel-strong); }
+.bb-debug-dot--ready     { background: var(--bb-color-link); }
+.bb-debug-dot--running   { background: var(--bb-color-link); box-shadow: 0 0 4px var(--bb-color-link); }
+.bb-debug-dot--done      { background: var(--bb-color-success); }
+.bb-debug-dot--failed    { background: var(--bb-color-error); }
+.bb-debug-dot--unavailable { background: var(--bb-color-warning); }
+
+.bb-debug-label {
+    color: var(--bb-color-foreground);
+    font-weight: var(--bb-font-weight-medium);
+    flex-shrink: 0;
+}
+
+.bb-debug-step--unavailable .bb-debug-label { color: var(--bb-color-warning); }
+.bb-debug-step--failed .bb-debug-label      { color: var(--bb-color-error); }
+.bb-debug-step--done .bb-debug-label        { color: var(--bb-color-success); }
+
+.bb-debug-msg {
+    color: var(--bb-color-muted);
+    font-size: 10px;
+    margin-left: auto;
+    white-space: nowrap;
 }
 
 .bb-start-row {
@@ -430,6 +524,10 @@ button {
     font-size: 12px;
     font-weight: var(--bb-font-weight-medium);
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
 }
 
 .bb-start-button:hover {
@@ -659,6 +757,19 @@ button {
     background: color-mix(in srgb, var(--bb-color-link) 12%, var(--bb-color-panel));
 }
 
+.bb-section-title--with-icon,
+.bb-toggle-label--with-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.bb-section-title--with-icon .bb-icon,
+.bb-toggle-label--with-icon .bb-icon {
+    width: 12px;
+    height: 12px;
+}
+
 /* Toggle Switch Styles */
 .bb-switch {
     position: relative;
@@ -740,4 +851,3 @@ button {
     --severity-color: var(--bb-severity-info);
     --severity-bg: var(--bb-severity-info-bg);
 }
-
