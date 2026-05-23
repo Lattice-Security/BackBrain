@@ -180,6 +180,7 @@ const App = () => {
     const [debugMode, setDebugMode] = useState(false);
     const [debugSteps, setDebugSteps] = useState<DebugStep[]>([]);
     const [debugPhase, setDebugPhase] = useState('');
+    const [lastScanSpecialists, setLastScanSpecialists] = useState<Array<{ name: string; focus: string }>>([]);
 
     useEffect(() => {
         vscode.setState({ issues, scanDepthTier });
@@ -220,6 +221,9 @@ const App = () => {
                     break;
                 case 'scanStatus':
                     setScanStatus(message);
+                    if (message.phase === 'agent-specialists' && message.agents && message.agents.length > 0) {
+                        setLastScanSpecialists(message.agents.map(name => ({ name, focus: '' })));
+                    }
                     break;
                 case 'configurationState':
                     setConfiguration(message.state);
@@ -769,15 +773,17 @@ const App = () => {
                                 </div>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                    {(() => {
+                                    {lastScanSpecialists.length === 0 ? (
+                                        <div className="bb-empty-state">
+                                            <div className="bb-empty-title">No specialist data yet</div>
+                                            <div className="bb-empty-copy">Run a scan with Agent Review enabled to see specialist details.</div>
+                                        </div>
+                                    ) : (() => {
                                         const agentIssues = issues.filter(i => i.sourceType === 'agent-only' || i.sourceType === 'agent-grounded');
-                                        const count = getDepthAgentCount(configuration.scanDepth);
-                                        const activeSpecs = ALL_SPECIALISTS.slice(0, count);
 
-                                        return activeSpecs.map((specTemplate, idx) => {
-                                            const specName = specTemplate.name;
-                                            const specFocus = specTemplate.focus;
-                                            
+                                        return lastScanSpecialists.map((spec, idx) => {
+                                            const specName = spec.name;
+
                                             const specFindings = agentIssues.filter(issue => {
                                                 const roles = issue.sourceRoles || [];
                                                 if (roles.length > 0) {
@@ -795,11 +801,11 @@ const App = () => {
                                             };
 
                                             return (
-                                                <div 
-                                                    key={specName} 
+                                                <div
+                                                    key={specName}
                                                     style={{ border: '0.5px solid var(--bb-color-border)', borderRadius: '7px', overflow: 'hidden' }}
                                                 >
-                                                    <div 
+                                                    <div
                                                         style={{ padding: '8px 10px', background: 'var(--bb-color-panel-soft)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
                                                         onClick={() => toggleSpec(specName)}
                                                     >
@@ -808,16 +814,16 @@ const App = () => {
                                                             <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--bb-color-foreground)' }}>{specName}</span>
                                                         </div>
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                                            <span style={{ 
-                                                                fontSize: '10px', 
-                                                                padding: '1px 5px', 
-                                                                borderRadius: '4px', 
-                                                                background: specFindings.length > 0 ? 'var(--bb-severity-high-bg)' : 'var(--bb-color-panel-strong)', 
-                                                                color: specFindings.length > 0 ? 'var(--bb-severity-high)' : 'var(--bb-color-muted)' 
+                                                            <span style={{
+                                                                fontSize: '10px',
+                                                                padding: '1px 5px',
+                                                                borderRadius: '4px',
+                                                                background: specFindings.length > 0 ? 'var(--bb-severity-high-bg)' : 'var(--bb-color-panel-strong)',
+                                                                color: specFindings.length > 0 ? 'var(--bb-severity-high)' : 'var(--bb-color-muted)'
                                                             }}>
                                                                 {specFindings.length} {specFindings.length === 1 ? 'finding' : 'findings'}
                                                             </span>
-                                                            <span style={{ 
+                                                            <span style={{
                                                                 display: 'inline-block',
                                                                 transform: isExpanded ? 'rotate(180deg)' : 'none',
                                                                 transition: 'transform var(--bb-transition-fast)',
@@ -831,7 +837,7 @@ const App = () => {
                                                     {isExpanded && (
                                                         <div style={{ padding: '8px 10px', borderTop: '0.5px solid var(--bb-color-border)', background: 'var(--bb-color-panel)' }}>
                                                             <div style={{ fontSize: '10px', color: 'var(--bb-color-muted)', marginBottom: '6px' }}>
-                                                                Backend: {configuration.agentBackends.find(b => b.enabled)?.label || 'Gemini'} · Focus: {specFocus}
+                                                                Backend: {configuration.agentBackends.find(b => b.enabled)?.label || 'Gemini'}
                                                             </div>
                                                             {specFindings.length === 0 ? (
                                                                 <div style={{ fontSize: '11px', color: 'var(--bb-color-muted)', fontStyle: 'italic', padding: '4px 0' }}>
