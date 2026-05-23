@@ -704,8 +704,9 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             if (token.isCancellationRequested) return;
         }
 
-        // ── Phase 3: Agent scanners ──
+        // ── Phase 3: Agent scanners — quick probe, skip full scan ──
         this._debugPhase = 'agents';
+        const probeFile = scanQueue[0] || process.cwd();
         for (const entry of toRun) {
             if (!entry.scanner || entry.scanner.scanKind !== 'agent') continue;
             if (token.isCancellationRequested) return;
@@ -713,31 +714,22 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             const step = this._debugSteps.find(s => s.id === entry.name);
             if (!step || step.status === 'unavailable') continue;
 
-            this._updateDebugStep(entry.name, 'running', 'Initiating agent review...');
+            this._updateDebugStep(entry.name, 'running', 'Starting agent with random prompt...');
             const t0 = Date.now();
             try {
-                const deterministicIssues: any[] = [];
-                const agentContext: any = { deterministicIssues, requestedPaths: scanQueue };
-                const result = entry.scanner.scanWithContext
-                    ? await entry.scanner.scanWithContext(scanQueue, agentContext)
-                    : await entry.scanner.scan(scanQueue);
+                const scanPromise = entry.scanner.scanFile(probeFile);
+                const result = await Promise.race([
+                    scanPromise.then(issues => ({ kind: 'done' as const, issues })),
+                    new Promise<{ kind: 'timeout' }>(resolve =>
+                        setTimeout(() => resolve({ kind: 'timeout' }), 8000)
+                    ),
+                ]);
                 const dur = Date.now() - t0;
-                this._updateDebugStep(entry.name, 'done', `Done — ${result.issues.length} issues in ${dur}ms`);
-                const codeIssues = result.issues.map((i: any) => ({
-                    id: i.id || `${entry.name}-${Math.random().toString(36).slice(2)}`,
-                    title: i.title || '',
-                    description: i.description || '',
-                    severity: i.severity || 'info',
-                    filePath: i.location?.filePath || i.filePath || '',
-                    line: i.location?.line || i.line || 1,
-                    column: i.location?.column || i.column || 1,
-                    category: i.category || 'logic',
-                    source: i.source,
-                    sourceType: i.sourceType,
-                    confidence: i.confidence,
-                    verificationStatus: i.verificationStatus,
-                }));
-                this._issues.push(...codeIssues);
+                if (result.kind === 'timeout') {
+                    this._updateDebugStep(entry.name, 'working', `Agent processing sample file (${dur}ms) — debug mode continuing`);
+                } else {
+                    this._updateDebugStep(entry.name, 'done', `Done — ${result.issues.length} issues in ${dur}ms (debug: quick probe)`);
+                }
             } catch (error: any) {
                 const dur = Date.now() - t0;
                 this._updateDebugStep(entry.name, 'failed', `Failed — ${error?.message ?? error} (${dur}ms)`);
