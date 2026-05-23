@@ -461,7 +461,7 @@ const App = () => {
                                                     return (
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', border: '0.5px solid var(--bb-color-border)', background: 'var(--bb-color-panel-soft)' }}>
                                                             <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--bb-color-link)', flexShrink: 0 }} />
-                                                            <div style={{ fontSize: '11px', color: 'var(--bb-color-foreground'), flex: 1 }}>AI Planner creating specialists...</div>
+                                                            <div style={{ fontSize: 11, color: 'var(--bb-color-foreground)', flex: 1 }}>AI Planner creating specialists...</div>
                                                         </div>
                                                     );
                                                 }
