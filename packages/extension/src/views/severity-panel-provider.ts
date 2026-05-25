@@ -74,6 +74,8 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private _debugMode = false;
     private _debugSteps: DebugStep[] = [];
     private _debugPhase = '';
+    private _selectedCustomPaths: string[] | null = null;
+    private _selectedCustomDisplayNames: string[] = [];
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
@@ -244,7 +246,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     }
 
     private async _checkAgentBackendAvailability(
-        backendId: AgentBackendId,
+        _backendId: AgentBackendId,
         binaryPath: string,
     ): Promise<{ available: boolean }> {
         // Fast path: only check if the binary exists on PATH.
@@ -363,6 +365,14 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
 
                 case 'refreshConfiguration':
                     await this.syncConfigurationState(true);
+                    break;
+
+                case 'selectCustomPaths':
+                    await this._handleSelectCustomPaths();
+                    break;
+
+                case 'checkChangedFiles':
+                    await this._checkChangedFiles();
                     break;
 
                 case 'updateScannerSelection':
@@ -486,18 +496,23 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
 
         // ── Custom path ────────────────────────────────────────────────────────
         if (target === 'custom') {
-            const selected = await vscode.window.showOpenDialog({
-                canSelectFiles: true,
-                canSelectFolders: true,
-                canSelectMany: true,
-                defaultUri: root,
-                openLabel: 'Scan selected',
-                title: 'BackBrain: Select files or folders to scan',
-            });
+            let selectedPaths = this._selectedCustomPaths;
 
-            // User dismissed the dialog — abort silently, do not start a scan
-            if (!selected || selected.length === 0) {
-                return null;
+            if (!selectedPaths || selectedPaths.length === 0) {
+                const selected = await vscode.window.showOpenDialog({
+                    canSelectFiles: true,
+                    canSelectFolders: true,
+                    canSelectMany: true,
+                    defaultUri: root,
+                    openLabel: 'Scan selected',
+                    title: 'BackBrain: Select files or folders to scan',
+                });
+
+                // User dismissed the dialog — abort silently, do not start a scan
+                if (!selected || selected.length === 0) {
+                    return null;
+                }
+                selectedPaths = selected.map(uri => uri.fsPath);
             }
 
             // Expand folder selections to individual file paths.
@@ -505,8 +520,8 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             // scanner all treat every element of `paths[]` as an individual file
             // and will break if handed a directory path.
             const paths: string[] = [];
-            for (const uri of selected) {
-                if (uri.scheme !== 'file') continue;
+            for (const pathStr of selectedPaths) {
+                const uri = vscode.Uri.file(pathStr);
                 try {
                     const stat = await vscode.workspace.fs.stat(uri);
                     if (stat.type === vscode.FileType.Directory) {
@@ -799,6 +814,71 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    private async _handleSelectCustomPaths(): Promise<void> {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            return;
+        }
+        const root = workspaceFolders[0]!.uri;
+
+        const selected = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectFolders: true,
+            canSelectMany: true,
+            defaultUri: root,
+            openLabel: 'Select target',
+            title: 'BackBrain: Select files or folders to scan',
+        });
+
+        if (selected && selected.length > 0) {
+            this._selectedCustomPaths = selected.map(uri => uri.fsPath);
+            this._selectedCustomDisplayNames = selected.map(uri => {
+                return vscode.workspace.asRelativePath(uri) || uri.fsPath.split(/[\\/]/).pop() || uri.fsPath;
+            });
+            this._postMessage({
+                type: 'customPathsSelected',
+                displayNames: this._selectedCustomDisplayNames,
+            });
+        }
+    }
+
+    private async _checkChangedFiles(): Promise<void> {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            this._postMessage({ type: 'changedFilesStatus', error: 'No workspace folder open' });
+            return;
+        }
+        const root = workspaceFolders[0]!.uri;
+
+        try {
+            const { stdout } = await execFileAsync('git', ['diff', '--name-only', 'HEAD', '--'], {
+                cwd: root.fsPath,
+                timeout: 10000,
+                maxBuffer: 1024 * 1024,
+            });
+            const changedFiles = stdout
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(Boolean);
+
+            this._postMessage({
+                type: 'changedFilesStatus',
+                count: changedFiles.length,
+            });
+        } catch (error) {
+            logger.warn('git diff preview failed', { error });
+            const errMsg = error instanceof Error ? error.message : String(error);
+            let displayError = 'Git not available';
+            if (errMsg.includes('not a git repository')) {
+                displayError = 'Not a git repository';
+            }
+            this._postMessage({
+                type: 'changedFilesStatus',
+                error: displayError,
+            });
+        }
+    }
+
     /**
      * Handle explain issue request from webview
      */
@@ -960,6 +1040,12 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private _syncStateToWebview(): void {
         void this.syncConfigurationState();
         this._postMessage({ type: 'setScanDepthTier', label: this._scanDepthTierLabel });
+        if (this._selectedCustomDisplayNames.length > 0) {
+            this._postMessage({
+                type: 'customPathsSelected',
+                displayNames: this._selectedCustomDisplayNames,
+            });
+        }
         if (this._statusMessage) {
             this._postMessage({ type: 'statusUpdate', ...this._statusMessage });
         }

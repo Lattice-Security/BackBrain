@@ -158,7 +158,13 @@ function basename(filePath: string): string {
 }
 
 const App = () => {
-    const initialState = vscode.getState() as { issues?: IssueData[]; scanDepthTier?: string } | undefined;
+    const initialState = vscode.getState() as {
+        issues?: IssueData[];
+        scanDepthTier?: string;
+        selectedTarget?: ScanTarget;
+        customPathsDisplayNames?: string[];
+        changedFilesStatus?: { count?: number; error?: string; loading?: boolean } | null;
+    } | undefined;
     const [issues, setIssues] = useState<IssueData[]>(initialState?.issues || []);
     const [configuration, setConfiguration] = useState<ConfigurationState>(defaultConfiguration);
     const [scanDepthTier, setScanDepthTier] = useState<string>(initialState?.scanDepthTier || 'Developer Scan');
@@ -169,7 +175,10 @@ const App = () => {
     const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
     const [explanations, setExplanations] = useState<Record<string, ExplanationState>>({});
     const [activeTab, setActiveTab] = useState<TabId>('scan');
-    const [selectedTarget, setSelectedTarget] = useState<ScanTarget>('workspace');
+    const [selectedTarget, setSelectedTarget] = useState<ScanTarget>(initialState?.selectedTarget || 'workspace');
+    const [customPathsDisplayNames, setCustomPathsDisplayNames] = useState<string[]>(initialState?.customPathsDisplayNames || []);
+    const [changedFilesStatus, setChangedFilesStatus] = useState<{ count?: number; error?: string; loading?: boolean } | null>(initialState?.changedFilesStatus || null);
+
     const selectedTargetRef = useRef(selectedTarget);
     useEffect(() => {
         selectedTargetRef.current = selectedTarget;
@@ -183,8 +192,14 @@ const App = () => {
     const [lastScanSpecialists, setLastScanSpecialists] = useState<Array<{ name: string; focus: string }>>([]);
 
     useEffect(() => {
-        vscode.setState({ issues, scanDepthTier });
-    }, [issues, scanDepthTier]);
+        vscode.setState({
+            issues,
+            scanDepthTier,
+            selectedTarget,
+            customPathsDisplayNames,
+            changedFilesStatus
+        });
+    }, [issues, scanDepthTier, selectedTarget, customPathsDisplayNames, changedFilesStatus]);
 
     useEffect(() => {
         const handleMessage = (event: MessageEvent<ExtensionMessage>) => {
@@ -231,6 +246,16 @@ const App = () => {
                     break;
                 case 'setScanDepthTier':
                     setScanDepthTier(message.label);
+                    break;
+                case 'customPathsSelected':
+                    setCustomPathsDisplayNames(message.displayNames);
+                    break;
+                case 'changedFilesStatus':
+                    setChangedFilesStatus({
+                        count: message.count,
+                        error: message.error,
+                        loading: false,
+                    });
                     break;
                 case 'fixSuggested':
                     setActiveFix({ issueId: message.issueId, fix: message.fix });
@@ -513,18 +538,86 @@ const App = () => {
                         <section className="bb-section">
                             <div className="bb-section-title">Scan target</div>
                             <div className="bb-card-grid">
-                                {SCAN_TARGETS.map(target => (
-                                    <button
-                                        key={target.id}
-                                        className={`bb-scan-card${selectedTarget === target.id ? ' bb-scan-card--active' : ''}`}
-                                        onClick={() => setSelectedTarget(target.id)}
-                                        disabled={loading}
-                                    >
-                                        <span className="bb-card-icon"><Icon name={target.icon} /></span>
-                                        <span className="bb-card-label">{target.label}</span>
-                                        <span className="bb-card-detail">{target.description}</span>
-                                    </button>
-                                ))}
+                                {SCAN_TARGETS.map(target => {
+                                    const isSelected = selectedTarget === target.id;
+                                    return (
+                                        <div
+                                            key={target.id}
+                                            role="button"
+                                            tabIndex={loading ? -1 : 0}
+                                            className={`bb-scan-card${isSelected ? ' bb-scan-card--active' : ''}`}
+                                            style={loading ? { opacity: 0.55, cursor: 'not-allowed', pointerEvents: 'none' } : undefined}
+                                            onClick={() => {
+                                                if (loading) return;
+                                                setSelectedTarget(target.id);
+                                                if (target.id === 'custom') {
+                                                    vscode.postMessage({ type: 'selectCustomPaths' });
+                                                } else if (target.id === 'changed') {
+                                                    setChangedFilesStatus({ loading: true });
+                                                    vscode.postMessage({ type: 'checkChangedFiles' });
+                                                }
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (loading) return;
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    setSelectedTarget(target.id);
+                                                    if (target.id === 'custom') {
+                                                        vscode.postMessage({ type: 'selectCustomPaths' });
+                                                    } else if (target.id === 'changed') {
+                                                        setChangedFilesStatus({ loading: true });
+                                                        vscode.postMessage({ type: 'checkChangedFiles' });
+                                                    }
+                                                }
+                                            }}
+                                        >
+                                            <span className="bb-card-icon"><Icon name={target.icon} /></span>
+                                            <span className="bb-card-label">{target.label}</span>
+                                            <span className="bb-card-detail">{target.description}</span>
+
+                                            {target.id === 'custom' && customPathsDisplayNames.length > 0 && (
+                                                <div style={{ marginTop: '8px', borderTop: '0.5px solid var(--bb-color-border)', paddingTop: '6px', width: '100%', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                    <div style={{ fontSize: '10px', color: 'var(--bb-color-foreground)', wordBreak: 'break-all', maxHeight: '48px', overflowY: 'auto' }}>
+                                                        {customPathsDisplayNames.join(', ')}
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        style={{
+                                                            alignSelf: 'flex-start',
+                                                            fontSize: '9px',
+                                                            padding: '2px 6px',
+                                                            background: 'var(--bb-color-panel-strong)',
+                                                            border: '0.5px solid var(--bb-color-border)',
+                                                            borderRadius: '3px',
+                                                            cursor: 'pointer',
+                                                            color: 'var(--bb-color-link)',
+                                                            fontWeight: 'var(--bb-font-weight-medium)'
+                                                        }}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            vscode.postMessage({ type: 'selectCustomPaths' });
+                                                        }}
+                                                    >
+                                                        Change
+                                                    </button>
+                                                </div>
+                                            )}
+
+                                            {target.id === 'changed' && changedFilesStatus && (
+                                                <div style={{ marginTop: '6px', fontSize: '10px', color: changedFilesStatus.error ? 'var(--bb-color-error)' : 'var(--bb-color-muted)' }}>
+                                                    {changedFilesStatus.loading ? (
+                                                        <span>Checking changed files...</span>
+                                                    ) : changedFilesStatus.error ? (
+                                                        <span>{changedFilesStatus.error}</span>
+                                                    ) : changedFilesStatus.count === 0 ? (
+                                                        <span>No changed files found</span>
+                                                    ) : (
+                                                        <span>{changedFilesStatus.count} changed file{changedFilesStatus.count === 1 ? '' : 's'} detected</span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
                         </section>
 
