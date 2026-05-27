@@ -26,7 +26,7 @@ const logger = createLogger('AIAdapterFactory');
 // Constants
 // ============================================================================
 
-const PROVIDERS_PRIORITY: SupportedProvider[] = ['openai', 'anthropic', 'google', 'xai', 'deepseek', 'openrouter'];
+const PROVIDERS_PRIORITY: SupportedProvider[] = ['openai', 'anthropic', 'google', 'xai', 'deepseek', 'openrouter', 'nvidia'];
 const RATE_LIMIT_MS = 3000; // Minimum 3 seconds between AI requests
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache TTL
 
