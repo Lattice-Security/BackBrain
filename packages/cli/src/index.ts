@@ -1,6 +1,7 @@
 import { scanCommand, type ScanArgs } from './commands/scan';
 import { statusCommand } from './commands/status';
 import { historyCommand } from './commands/history';
+import { fixCommand, type FixArgs } from './commands/fix';
 
 function printHelp(): void {
     console.log(`
@@ -9,6 +10,7 @@ Usage: backbrain <command> [options]
 Commands:
   scan        Run a security scan on the current workspace
   status      Show the last scan result summary
+  fix         Apply fixes from the last scan
   history     List recent scan history entries
 
 Scan options:
@@ -20,6 +22,17 @@ Scan options:
   --no-agent          Skip AI agent review scanners
   --no-save           Skip writing .backbrain/ result files
   --scanners <list>   Comma-separated scanner names to use
+  --fix               After scan, apply safe auto-fixes automatically
+  --fix-all           After scan, apply all fixes (including non-autoFixable)
+  --commit            After scan + fix, git commit if all issues resolved
+
+Fix options:
+  --all               Apply all fixes (including non-autoFixable)
+  --issue <id>        Apply a specific fix by issue ID
+  --dry-run           Show what would change without modifying files
+  --revert <id>       Revert a previous fix session
+  --scan <id>         Use a specific scan result (default: latest)
+  --json              Output full results as JSON to stdout
 
 History options:
   -n, --count <num>   Number of recent entries to show (default: 10)
@@ -27,9 +40,15 @@ History options:
 Examples:
   backbrain scan
   backbrain scan --json
+  backbrain scan --fix
+  backbrain scan --fix --commit
   backbrain scan --min-severity high
   backbrain scan --changed
   backbrain status
+  backbrain fix
+  backbrain fix --dry-run
+  backbrain fix --issue sec-abc123
+  backbrain fix --revert session-1-12345
   backbrain history -n 5
 `);
 }
@@ -53,6 +72,11 @@ export async function main(argv: string[]): Promise<void> {
             const verbose = argv.includes('--verbose');
             await statusCommand({ dir, verbose });
             break;
+        }
+        case 'fix': {
+            const args = parseFixArgs(argv.slice(1));
+            const exitCode = await fixCommand(args);
+            process.exit(exitCode);
         }
         case 'history': {
             const dir = extractFlag(argv.slice(1), '--dir') || process.cwd();
@@ -82,6 +106,22 @@ function parseScanArgs(argv: string[]): ScanArgs {
         scanners: scn
             ? scn.split(',').map((s) => s.trim()).filter(Boolean)
             : undefined,
+        fix: argv.includes('--fix') || argv.includes('--fix-all'),
+        fixAll: argv.includes('--fix-all'),
+        commit: argv.includes('--commit'),
+    };
+}
+
+function parseFixArgs(argv: string[]): FixArgs {
+    return {
+        dir: extractFlag(argv, '--dir') || process.cwd(),
+        issueId: extractFlag(argv, '--issue') ?? undefined,
+        all: argv.includes('--all'),
+        dryRun: argv.includes('--dry-run'),
+        revert: extractFlag(argv, '--revert') ?? undefined,
+        scanId: extractFlag(argv, '--scan') ?? undefined,
+        json: argv.includes('--json'),
+        verbose: argv.includes('--verbose'),
     };
 }
 

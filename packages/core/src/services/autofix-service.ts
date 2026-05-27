@@ -19,7 +19,7 @@ export interface AutoFixOptions {
     dryRun?: boolean;
 }
 
-interface FileChange {
+export interface FileChange {
     filePath: string;
     originalContent: string;
     newContent: string;
@@ -56,6 +56,17 @@ class ChangeStore {
 }
 
 const changeStore = new ChangeStore();
+
+export function getSessionChanges(sessionId: string): FileChange[] {
+    return changeStore.getChanges(sessionId);
+}
+
+export function loadSessionChanges(sessionId: string, changes: FileChange[]): void {
+    changeStore.clearSession(sessionId);
+    for (const change of changes) {
+        changeStore.recordChange(sessionId, change);
+    }
+}
 
 /**
  * Apply a single fix to file content
@@ -153,6 +164,7 @@ async function applyFixesToFile(
             results.push({
                 issue,
                 applied: true,
+                originalContent,
                 newContent: content,
             });
             logger.debug(`Applied fix for ${issue.title}`, { filePath, line: issue.location.line });

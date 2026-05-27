@@ -65,6 +65,7 @@ export interface FixResult {
     issue: CodeIssue;
     applied: boolean;
     error?: string;
+    originalContent?: string;
     newContent?: string;
 }
 

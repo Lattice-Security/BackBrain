@@ -10,6 +10,11 @@ import {
     addLoggerOutput,
     getLogger,
     LOG_LEVELS,
+    applyFixes,
+    getSessionChanges,
+    FixSessionStore,
+    NodeFilesystem,
+    providerRegistry,
     type SecurityScanStatusUpdate,
     type ScanRecord,
 } from '@backbrain/core';
@@ -26,6 +31,9 @@ export interface ScanArgs {
     noAgent: boolean;
     noSave: boolean;
     scanners?: string[] | undefined;
+    fix: boolean;
+    fixAll: boolean;
+    commit: boolean;
 }
 
 const EXCLUDED_DIRECTORIES = new Set([
@@ -112,6 +120,92 @@ export async function scanCommand(args: ScanArgs): Promise<number> {
     });
 
     const record = await store.save(result);
+
+    // ── Fix pipeline ─────────────────────────────────────────────────────
+    if (args.fix && result.issues.length > 0) {
+        const fixable = result.issues.filter(i => i.suggestedFix);
+        const safe = fixable.filter(i => i.suggestedFix!.autoFixable);
+
+        if (fixable.length === 0) {
+            logger.info('No fixable issues found');
+        } else {
+            const target = args.fixAll ? fixable : safe;
+            if (!args.fixAll && safe.length < fixable.length) {
+                logger.info(`Skipping ${fixable.length - safe.length} non-auto-fixable issue(s) (use --fix-all to include)`);
+            }
+
+            const fs = new NodeFilesystem();
+            providerRegistry.registerFilesystem('node-fs', fs, true);
+
+            const fixResult = await applyFixes(target, { safeOnly: !args.fixAll });
+
+            const fixStore = new FixSessionStore(root);
+            const changes = getSessionChanges(fixResult.sessionId);
+            await fixStore.save({
+                sessionId: fixResult.sessionId,
+                timestamp: new Date().toISOString(),
+                scanId: record.scanId,
+                summary: {
+                    totalIssues: fixResult.summary.totalIssues,
+                    fixed: fixResult.summary.fixed,
+                    skipped: fixResult.summary.skipped,
+                    failed: fixResult.summary.failed,
+                },
+                changes,
+            });
+
+            if (!args.json) {
+                console.log('');
+                console.log(`Fixed ${fixResult.summary.fixed} of ${fixResult.summary.totalIssues} issue(s) (session: ${fixResult.sessionId})`);
+                if (fixResult.summary.failed > 0) {
+                    console.log(`${fixResult.summary.failed} fix(es) failed`);
+                }
+            }
+
+            // Re-scan if fixes were applied
+            if (fixResult.summary.fixed > 0) {
+                logger.info('Re-scanning after fixes...');
+                const reResult = await securityService.scan(files, {
+                    scanners: args.scanners,
+                    minSeverity: args.minSeverity,
+                    onStatus,
+                } as any);
+
+                const reRecord = await store.save(reResult);
+                const remaining = reResult.issues.length;
+
+                logger.info(`Re-scan: ${remaining} issue(s) remaining`);
+
+                if (!args.json) {
+                    console.log('');
+                    console.log(`Re-scan: ${remaining} issue(s) remaining (was ${result.issues.length})`);
+                    if (remaining > 0) {
+                        printSummary(reRecord, []);
+                    }
+                }
+
+                // ── Git commit ──────────────────────────────────────────
+                if (args.commit && remaining === 0) {
+                    logger.info('All issues resolved, committing...');
+                    try {
+                        const { execFile } = await import('child_process');
+                        const { promisify } = await import('util');
+                        const execAsync = promisify(execFile);
+
+                        await execAsync('git', ['add', '-A'], { cwd: root, timeout: 15000 });
+                        const msg = `chore: auto-fix security issues (session ${fixResult.sessionId})`;
+                        await execAsync('git', ['commit', '-m', msg], { cwd: root, timeout: 15000 });
+                        console.log(`Committed with message: ${msg}`);
+                    } catch (commitErr) {
+                        logger.warn('Git commit failed', { error: String(commitErr) });
+                        console.warn('Git commit failed (may need manual commit)');
+                    }
+                } else if (args.commit && remaining > 0) {
+                    console.log(`${remaining} issue(s) still present — skipping commit`);
+                }
+            }
+        }
+    }
 
     if (args.json) {
         console.log(JSON.stringify(record, null, 2));
