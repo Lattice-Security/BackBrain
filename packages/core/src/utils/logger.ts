@@ -116,6 +116,16 @@ export function configureLogger(level: LogLevel, outputs?: LogOutput[]): void {
 }
 
 /**
+ * Add a log output to the global logger instance.
+ * Safe to call even before the logger is initialized.
+ */
+export function addLoggerOutput(output: LogOutput): void {
+    if (loggerInstance) {
+        loggerInstance.addOutput(output);
+    }
+}
+
+/**
  * Create a logger with a namespace prefix
  */
 export function createLogger(namespace: string): Logger {

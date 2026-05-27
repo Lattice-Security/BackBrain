@@ -14,6 +14,7 @@
     "test:performance": "bun test tests/performance",
     "test:e2e": "bun test tests/e2e",
     "test:all": "bun test tests/unit tests/integration tests/performance",
+    "backbrain": "bun run packages/cli/src/index.ts",
     "analyze:bundle": "node scripts/analyze-bundle.js",
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write .",
