@@ -61,10 +61,26 @@ export class VercelAIAdapter implements AIProvider {
             return;
         }
 
+        let resolvedBaseUrl = this.config.baseUrl;
+        let resolvedModel = this.config.model;
+
+        // Auto-detect NVIDIA NIM API key and configure it automatically
+        if (this.config.provider === 'openai' && apiKey.startsWith('nvapi-')) {
+            resolvedBaseUrl = 'https://integrate.api.nvidia.com/v1';
+            if (this.config.model === 'gpt-4o' || !this.config.model) {
+                resolvedModel = 'meta/llama-3.1-70b-instruct';
+                this.config.model = resolvedModel;
+            }
+            logger.info('Auto-detected NVIDIA NIM API key. Overriding OpenAI configuration to use NVIDIA NIM.', {
+                baseUrl: resolvedBaseUrl,
+                model: resolvedModel
+            });
+        }
+
         // Build settings object, only including baseURL if defined
         const baseSettings = { apiKey };
-        const settings = this.config.baseUrl
-            ? { ...baseSettings, baseURL: this.config.baseUrl }
+        const settings = resolvedBaseUrl
+            ? { ...baseSettings, baseURL: resolvedBaseUrl }
             : baseSettings;
 
         try {
