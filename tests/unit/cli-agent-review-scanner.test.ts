@@ -246,8 +246,18 @@ describe('CliAgentReviewScanner', () => {
             },
         });
 
+        // Version check should pass
         const available = await scanner.isAvailable();
-        expect(available).toBe(false);
+        expect(available).toBe(true);
+
+        // But scan should skip it because readiness probe fails
+        const result = await scanner.scanWithContext(['/repo/app.py'], {
+            repositoryRoot: '/repo',
+            deterministicIssues: [],
+            changedFiles: [],
+        });
+        expect(result.issues).toEqual([]);
+        expect(result.scannerInfo).toContain('no backends available');
     });
 
     it('should run planner, specialist, and aggregator using the Gemini backend output envelope', async () => {
@@ -437,8 +447,18 @@ describe('CliAgentReviewScanner', () => {
             },
         });
 
+        // Version check should pass
         const available = await scanner.isAvailable();
-        expect(available).toBe(false);
+        expect(available).toBe(true);
+
+        // But scan should skip it because readiness probe fails
+        const result = await scanner.scanWithContext(['/repo/app.py'], {
+            repositoryRoot: '/repo',
+            deterministicIssues: [],
+            changedFiles: [],
+        });
+        expect(result.issues).toEqual([]);
+        expect(result.scannerInfo).toContain('no backends available');
     });
 
     it('should scope planner input to changed files when configured', async () => {
@@ -798,7 +818,7 @@ describe('CliAgentReviewScanner', () => {
 
         const scanner = new CliAgentReviewScanner({
             execFn: execMock as any,
-            preferredBackend: 'codex',
+            preferredBackend: 'opencode',
             backends: {
                 codex: { enabled: true, binaryPath: 'codex' },
                 gemini: { enabled: false },
@@ -806,8 +826,14 @@ describe('CliAgentReviewScanner', () => {
             },
         });
 
-        await scanner.isAvailable();
-        const readinessCalls = calls.filter(cmd => cmd.includes('exec') || cmd.includes('run'));
-        expect(readinessCalls[0]).toContain('codex exec');
+        await scanner.scanWithContext(['/repo/app.py'], {
+            repositoryRoot: '/repo',
+            deterministicIssues: [],
+            changedFiles: [],
+        });
+
+        const executionCalls = calls.filter(cmd => cmd.includes('exec') || cmd.includes('run'));
+        // The planner call (the 3rd call) should be opencode run because it is preferred
+        expect(executionCalls[2]).toContain('opencode run');
     });
 });
