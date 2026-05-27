@@ -11,6 +11,7 @@ import {
   TrivyScanner,
   OSVScanner,
   VibeCodeScanner,
+  TreeSitterScanner,
   CliAgentReviewScanner,
   type AgentScanDepth,
   resolveScanDepthConfig,
@@ -27,6 +28,7 @@ import { initializeFixHistoryService } from './services/fix-history-service';
 import { registerFixPreviewProvider } from './services/fix-preview-provider';
 import { GeminiCliInstaller } from './utils/gemini-cli-installer';
 import { isRecentlyNavigated } from './utils/navigation-cooldown';
+import { loadTreeSitterGrammars } from './services/tree-sitter-grammar-loader';
 
 const logger = createLogger('Extension');
 
@@ -336,6 +338,12 @@ export async function activate(context: vscode.ExtensionContext) {
       logger.error('Unexpected error during scanner registration', { error: err });
     }
 
+    // Initialize tree-sitter grammar WASM files eagerly
+    const tsScanner = scanners.find(s => s instanceof TreeSitterScanner) as TreeSitterScanner | undefined;
+    const treeSitterInitPromise = tsScanner
+      ? loadTreeSitterGrammars(tsScanner, context.extensionUri)
+      : Promise.resolve();
+
     const scannerToolConfigurationPromise = configureInstalledOptionalScannerTools(
       cliInstaller,
       (toolId, binaryPath) => {
@@ -397,6 +405,9 @@ export async function activate(context: vscode.ExtensionContext) {
       watcher.onDidDelete(reloadRules);
       context.subscriptions.push(watcher);
     }
+
+    // Ensure tree-sitter grammars are loaded before creating the security service
+    await treeSitterInitPromise;
 
     // Create security service
     const securityService = new SecurityService(scanners);

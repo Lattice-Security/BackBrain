@@ -264,7 +264,7 @@
     }
   },
   "scripts": {
-    "build": "tsup && cp -f ../core/node_modules/web-tree-sitter/tree-sitter.wasm dist/ && bun run build:webview",
+    "build": "tsup && cp -f ../core/node_modules/web-tree-sitter/tree-sitter.wasm dist/ && cp -f ../core/node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm dist/ && cp -f ../core/node_modules/tree-sitter-typescript/tree-sitter-typescript.wasm dist/ && cp -f ../core/node_modules/tree-sitter-typescript/tree-sitter-tsx.wasm dist/ && bun run build:webview",
     "build:webview": "vite build",
     "watch": "tsup --watch",
     "typecheck": "tsc --noEmit && tsc -p src/webview/tsconfig.json --noEmit"
@@ -274,7 +274,8 @@
     "@vscode/webview-ui-toolkit": "^1.4.0",
     "handlebars": "^4.7.8",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "web-tree-sitter": "0.22.6"
   },
   "devDependencies": {
     "@types/handlebars": "^4.1.0",
