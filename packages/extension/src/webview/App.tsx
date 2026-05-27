@@ -17,6 +17,7 @@ import type {
     ScanTarget,
 } from './messages';
 import { IssueItem } from './components/IssueItem';
+import { Visualizer } from './components/Visualizer';
 import { ErrorBoundary, ErrorCard } from './components/ErrorBoundary';
 import './styles/theme.css';
 
@@ -47,9 +48,10 @@ type IconName =
     | 'spark'
     | 'users'
     | 'x'
-    | 'zap';
+    | 'zap'
+    | 'graph';
 
-type TabId = 'scan' | 'issues' | 'agents';
+type TabId = 'scan' | 'issues' | 'agents' | 'visualizer';
 type SortMethod = 'severity' | 'filename';
 type FilterMethod = 'all' | 'ai' | 'deterministic';
 
@@ -72,6 +74,7 @@ const ICON_PATHS: Record<IconName, string[]> = {
     users: ['M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2', 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', 'M22 21v-2a4 4 0 0 0-3-3.9', 'M16 3.1a4 4 0 0 1 0 7.8'],
     x: ['M18 6 6 18', 'M6 6l12 12'],
     zap: ['M13 2 3 14h8l-1 8 11-13h-8Z'],
+    graph: ['M12 3v3', 'M19 9h-3.5', 'M5 9h3.5', 'M12 18v3', 'M12 6a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z', 'M19 12a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z', 'M5 12a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z']
 };
 
 function Icon({ name, className }: { name: IconName; className?: string }) {
@@ -153,9 +156,14 @@ const getDepthAgentCount = (depth: AgentScanDepth): number => {
     }
 };
 
-function basename(filePath: string): string {
-    return filePath.split(/[\\/]/).pop() || filePath;
-}
+const ALL_SPECIALISTS = [
+    { name: 'AI Orchestration Security', focus: 'prompt injection, agent sandbox bypasses, and insecure command templates' },
+    { name: 'CLI Credential Auditor', focus: 'insecure CLI token storage, environment variable exposure, and path hijacking' },
+    { name: 'Input Sanitization Auditor', focus: 'shell injection, regex bypasses, and untrusted path traversals' },
+    { name: 'Dependency Vulnerability Specialist', focus: 'outdated libraries, transitive vulnerable deps, and license risks' },
+    { name: 'AST Rule Validator', focus: 'unhandled promises, type coercion errors, and naming mismatches' },
+    { name: 'General Security Expert', focus: 'OWASP Top 10 vulnerabilities, code smells, and API contract breaches' }
+];
 
 const App = () => {
     const initialState = vscode.getState() as { issues?: IssueData[]; scanDepthTier?: string } | undefined;
@@ -380,14 +388,14 @@ const App = () => {
                 </header>
 
                 <nav className="bb-tab-row">
-                    {(['scan', 'issues', 'agents'] as TabId[]).map(tab => (
+                    {(['scan', 'issues', 'agents', 'visualizer'] as TabId[]).map(tab => (
                         <button
                             key={tab}
                             className={`bb-tab${activeTab === tab ? ' bb-tab--active' : ''}`}
                             onClick={() => setActiveTab(tab)}
                         >
-                            <Icon name={tab === 'scan' ? 'play' : tab === 'issues' ? 'shield' : 'users'} />
-                            <span>{tab === 'scan' ? 'Scan' : tab === 'issues' ? 'Issues' : 'Agents'}</span>
+                            <Icon name={tab === 'scan' ? 'play' : tab === 'issues' ? 'shield' : tab === 'agents' ? 'users' : 'graph'} />
+                            <span>{tab === 'scan' ? 'Scan' : tab === 'issues' ? 'Issues' : tab === 'agents' ? 'Agents' : 'Visualizer'}</span>
                         </button>
                     ))}
                 </nav>
@@ -861,6 +869,12 @@ const App = () => {
                                 </div>
                             )}
                         </section>
+                    </main>
+                )}
+
+                {activeTab === 'visualizer' && (
+                    <main className="bb-view">
+                        <Visualizer issues={issues} />
                     </main>
                 )}
             </div>

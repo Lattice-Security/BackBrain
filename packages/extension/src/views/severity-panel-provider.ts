@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { createLogger, type SecurityScanStatusUpdate, type SecurityService } from '@backbrain/core';
+import { createLogger, type SecurityScanStatusUpdate, type SecurityService, VisualizerService, providerRegistry } from '@backbrain/core';
 import {
     type AgentBackendId,
     type AgentScanDepth,
@@ -13,7 +13,7 @@ import {
     type FixData,
     toIssueData,
 } from '../webview/messages';
-import { getActiveProvider } from '../services/ai-adapter-factory';
+import { getActiveProvider, getOrCreateAIAdapter } from '../services/ai-adapter-factory';
 
 const logger = createLogger('SeverityPanel');
 const execFileAsync = promisify(execFile);
@@ -244,7 +244,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     }
 
     private async _checkAgentBackendAvailability(
-        backendId: AgentBackendId,
+        _backendId: AgentBackendId,
         binaryPath: string,
     ): Promise<{ available: boolean }> {
         // Fast path: only check if the binary exists on PATH.
@@ -421,6 +421,10 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                         this._debugSteps = [];
                         this._debugPhase = '';
                     }
+                    break;
+
+                case 'requestGraphData':
+                    await this._handleRequestGraphData();
                     break;
             }
         });
@@ -896,6 +900,72 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             paused: false,
             phase: this._debugPhase,
         });
+    }
+
+    private async _handleRequestGraphData(): Promise<void> {
+        try {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders || workspaceFolders.length === 0) {
+                this._postMessage({
+                    type: 'graphData',
+                    fileGraph: { nodes: [], edges: [] },
+                    workflowGraph: { id: '', name: '', steps: [], connections: [] },
+                    status: 'error',
+                    error: 'No open workspace'
+                });
+                return;
+            }
+
+            const rootPath = workspaceFolders[0]!.uri.fsPath;
+            const scanQueue = await this._resolveScanPaths('workspace');
+            const fileSystem = providerRegistry.getFilesystem();
+            if (!fileSystem) {
+                this._postMessage({
+                    type: 'graphData',
+                    fileGraph: { nodes: [], edges: [] },
+                    workflowGraph: { id: '', name: '', steps: [], connections: [] },
+                    status: 'error',
+                    error: 'No filesystem adapter available'
+                });
+                return;
+            }
+            
+            // Map Issues back to SecurityIssues
+            const rawIssues = this._issues.map(issue => ({
+                ruleId: issue.id,
+                title: issue.title,
+                description: issue.description,
+                severity: issue.severity,
+                filePath: issue.filePath,
+                line: issue.line,
+                column: issue.column,
+                snippet: issue.snippet || ''
+            }));
+
+            // Get AI provider if available
+            const adapter = await getOrCreateAIAdapter();
+            const aiProvider = adapter || undefined;
+
+            const visualizer = new VisualizerService();
+            const fileGraph = await visualizer.generateFileGraph(scanQueue, fileSystem, rootPath);
+            const workflowGraph = await visualizer.generateWorkflowGraph(scanQueue, fileSystem, rawIssues, aiProvider);
+
+            this._postMessage({
+                type: 'graphData',
+                fileGraph,
+                workflowGraph,
+                status: 'ready'
+            });
+        } catch (error) {
+            logger.error('Failed to generate visualizer graphs', { error });
+            this._postMessage({
+                type: 'graphData',
+                fileGraph: { nodes: [], edges: [] },
+                workflowGraph: { id: '', name: '', steps: [], connections: [] },
+                status: 'error',
+                error: error instanceof Error ? error.message : String(error)
+            });
+        }
     }
 
     private _syncStateToWebview(): void {

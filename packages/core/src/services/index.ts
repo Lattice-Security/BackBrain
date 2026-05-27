@@ -9,3 +9,4 @@ export * from './autofix-service';
 export * from './provider-registry';
 export * from './ai-analysis-service';
 export * from './report-service';
+export * from './visualizer-service';

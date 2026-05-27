@@ -29,6 +29,8 @@ interface ToolDescriptor {
     binaryCandidates?: string[];
 }
 
+export type InstallProgressCallback = (message: string) => void;
+
 const TOOL_DESCRIPTORS: Record<string, ToolDescriptor> = {
     gitleaks: {
         id: 'gitleaks',
@@ -37,8 +39,8 @@ const TOOL_DESCRIPTORS: Record<string, ToolDescriptor> = {
         repo: 'gitleaks/gitleaks',
         docsUrl: 'https://github.com/gitleaks/gitleaks',
         assetPatterns: {
-            linux: [/linux_x64\.tar\.gz$/i, /linux_amd64\.tar\.gz$/i],
-            darwin: [/darwin_x64\.tar\.gz$/i, /darwin_amd64\.tar\.gz$/i, /darwin_arm64\.tar\.gz$/i],
+            linux: [/linux_x64\.tar\.gz$/i, /linux_amd64\.tar\.gz$/i, /linux_arm64\.tar\.gz$/i],
+            darwin: [/darwin_arm64\.tar\.gz$/i, /darwin_x64\.tar\.gz$/i, /darwin_amd64\.tar\.gz$/i],
             win32: [/windows_x64\.zip$/i, /windows_amd64\.zip$/i],
         },
         binaryCandidates: ['gitleaks', 'gitleaks.exe'],
@@ -51,7 +53,7 @@ const TOOL_DESCRIPTORS: Record<string, ToolDescriptor> = {
         docsUrl: 'https://github.com/aquasecurity/trivy',
         assetPatterns: {
             linux: [/Linux-64bit\.tar\.gz$/i, /linux-64bit\.tar\.gz$/i],
-            darwin: [/macOS-64bit\.tar\.gz$/i, /macos-64bit\.tar\.gz$/i, /macOS-ARM64\.tar\.gz$/i, /macos-arm64\.tar\.gz$/i],
+            darwin: [/macOS-ARM64\.tar\.gz$/i, /macos-arm64\.tar\.gz$/i, /macOS-64bit\.tar\.gz$/i, /macos-64bit\.tar\.gz$/i],
             win32: [/Windows-64bit\.zip$/i, /windows-64bit\.zip$/i],
         },
         binaryCandidates: ['trivy', 'trivy.exe'],
@@ -63,20 +65,35 @@ const TOOL_DESCRIPTORS: Record<string, ToolDescriptor> = {
         repo: 'google/osv-scanner',
         docsUrl: 'https://github.com/google/osv-scanner',
         assetPatterns: {
-            linux: [/linux_amd64/i, /linux_x86_64/i],
-            darwin: [/darwin_amd64/i, /darwin_arm64/i],
+            linux: [/linux_amd64/i, /linux_x86_64/i, /linux_arm64/i],
+            darwin: [/darwin_arm64/i, /darwin_amd64/i],
             win32: [/windows_amd64.*\.exe$/i, /windows_x86_64.*\.exe$/i, /windows_amd64.*\.zip$/i],
         },
         binaryCandidates: [
-            'osv-scanner', 
+            'osv-scanner',
             'osv-scanner.exe',
             'osv-scanner_linux_amd64',
             'osv-scanner_linux_x86_64',
+            'osv-scanner_linux_arm64',
             'osv-scanner_darwin_amd64',
             'osv-scanner_darwin_arm64',
             'osv-scanner_windows_amd64.exe',
-            'osv-scanner_windows_x86_64.exe'
+            'osv-scanner_windows_x86_64.exe',
         ],
+    },
+    semgrep: {
+        id: 'semgrep',
+        displayName: 'Semgrep',
+        binaryName: 'semgrep',
+        repo: 'semgrep/semgrep',
+        docsUrl: 'https://semgrep.dev/docs/getting-started/',
+        assetPatterns: {
+            // Semgrep releases standalone pre-compiled tarballs on GitHub
+            linux: [/linux-amd64\.(tgz|tar\.gz)$/i, /linux-arm64\.(tgz|tar\.gz)$/i],
+            darwin: [/macos-arm64\.(tgz|tar\.gz)$/i, /macos-x86_64\.(tgz|tar\.gz)$/i, /macos-amd64\.(tgz|tar\.gz)$/i],
+            win32: [/win-amd64\.(zip|exe)$/i, /windows.*amd64.*\.(zip|exe)$/i],
+        },
+        binaryCandidates: ['semgrep', 'semgrep.exe'],
     },
 };
 
@@ -85,12 +102,20 @@ type ToolId = keyof typeof TOOL_DESCRIPTORS;
 export class GitHubCliInstaller {
     private readonly execFn: typeof cp.exec;
     private readonly fs: typeof fs;
+    /** Base directory for managed binary storage. Defaults to ~/.backbrain/tools */
+    private readonly storagePath: string;
 
-    constructor(execFn?: typeof cp.exec, fileSystem?: typeof fs) {
+    constructor(
+        execFn?: typeof cp.exec,
+        fileSystem?: typeof fs,
+        storagePath?: string,
+    ) {
         this.execFn = execFn || cp.exec;
         this.fs = fileSystem || fs;
+        this.storagePath = storagePath || path.join(os.homedir(), '.backbrain', 'tools');
     }
 
+    /** Returns true if the binary can be executed (managed install or system PATH). */
     async isAvailable(toolId: ToolId): Promise<boolean> {
         const descriptor = this.getDescriptor(toolId);
         try {
@@ -106,6 +131,17 @@ export class GitHubCliInstaller {
         }
     }
 
+    /**
+     * Returns true if a BackBrain-managed binary exists for this tool.
+     * This is a fast, synchronous check that does NOT probe the system PATH.
+     */
+    isInstalledLocally(toolId: ToolId): boolean {
+        const markerPath = this.getMarkerPath(toolId);
+        if (!this.fs.existsSync(markerPath)) return false;
+        const binaryPath = this.fs.readFileSync(markerPath, 'utf8').trim();
+        return Boolean(binaryPath) && this.fs.existsSync(binaryPath);
+    }
+
     getBinaryPath(toolId: ToolId): string {
         const markerPath = this.getMarkerPath(toolId);
         if (this.fs.existsSync(markerPath)) {
@@ -117,14 +153,23 @@ export class GitHubCliInstaller {
         return this.getDescriptor(toolId).binaryName;
     }
 
-    async install(toolId: ToolId): Promise<string> {
+    /**
+     * Download and install the latest release into the managed storage directory.
+     * Calls `onProgress` with human-readable status messages.
+     */
+    async installWithProgress(toolId: ToolId, onProgress?: InstallProgressCallback): Promise<string> {
         const descriptor = this.getDescriptor(toolId);
-        logger.info('Installing external CLI tool', { tool: descriptor.id });
+        logger.info('Installing managed CLI tool', { tool: descriptor.id });
 
+        onProgress?.(`Fetching latest ${descriptor.displayName} release info...`);
         const release = await this.fetchLatestRelease(descriptor.repo);
+        logger.info(`Latest ${descriptor.displayName} release: ${release.tag_name}`);
+
         const asset = this.selectAsset(descriptor, release);
         if (!asset) {
-            throw new Error(`No compatible release asset found for ${descriptor.displayName} on ${process.platform}.`);
+            throw new Error(
+                `No compatible release asset found for ${descriptor.displayName} on ${process.platform}/${process.arch}.`
+            );
         }
 
         const toolRoot = this.getToolRoot(toolId);
@@ -132,20 +177,34 @@ export class GitHubCliInstaller {
         const archivePath = path.join(versionDir, asset.name);
         this.fs.mkdirSync(versionDir, { recursive: true });
 
+        onProgress?.(`Downloading ${descriptor.displayName} ${release.tag_name}...`);
         await this.downloadFile(asset.browser_download_url, archivePath);
+
+        onProgress?.('Extracting archive...');
         await this.extractArchive(archivePath, versionDir);
 
         const binaryPath = this.findBinary(versionDir, descriptor.binaryCandidates || [descriptor.binaryName]);
         if (!binaryPath) {
-            throw new Error(`Installed ${descriptor.displayName}, but could not find its executable.`);
+            throw new Error(`Installed ${descriptor.displayName}, but could not find its executable in the archive.`);
         }
 
         if (process.platform !== 'win32') {
             this.fs.chmodSync(binaryPath, 0o755);
+            // Remove macOS Gatekeeper quarantine attribute — user-space op, no password needed
+            if (process.platform === 'darwin') {
+                await this.removeQuarantine(binaryPath);
+            }
         }
+
         this.fs.writeFileSync(this.getMarkerPath(toolId), binaryPath, 'utf8');
-        logger.info('Installed external CLI tool', { tool: descriptor.id, binaryPath });
+        logger.info('Installed managed CLI tool', { tool: descriptor.id, binaryPath });
+        onProgress?.(`${descriptor.displayName} installed successfully.`);
         return binaryPath;
+    }
+
+    /** Legacy install without progress callback (used internally). */
+    async install(toolId: ToolId): Promise<string> {
+        return this.installWithProgress(toolId);
     }
 
     getDocsUrl(toolId: ToolId): string {
@@ -156,13 +215,31 @@ export class GitHubCliInstaller {
         return this.getDescriptor(toolId).displayName;
     }
 
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    /**
+     * Select the best-matching release asset.
+     * On Apple Silicon, arm64 assets are preferred over x64/amd64.
+     * On Intel, x64/amd64 assets are preferred over arm64.
+     */
     private selectAsset(descriptor: ToolDescriptor, release: GitHubRelease): GitHubReleaseAsset | undefined {
         const patterns = descriptor.assetPatterns[process.platform];
-        if (!patterns || patterns.length === 0) {
-            return undefined;
-        }
+        if (!patterns || patterns.length === 0) return undefined;
 
-        return release.assets.find(asset => patterns.some(pattern => pattern.test(asset.name)));
+        const matches = release.assets.filter(asset =>
+            patterns.some(pattern => pattern.test(asset.name))
+        );
+
+        if (matches.length <= 1) return matches[0];
+
+        const isArm64 = process.arch === 'arm64';
+        if (isArm64) {
+            const preferred = matches.find(a => /arm64/i.test(a.name));
+            return preferred ?? matches[0];
+        } else {
+            const preferred = matches.find(a => /x86_64|amd64|x64/i.test(a.name) && !/arm64/i.test(a.name));
+            return preferred ?? matches[0];
+        }
     }
 
     private findBinary(rootDir: string, candidates: string[]): string | undefined {
@@ -183,7 +260,7 @@ export class GitHubCliInstaller {
     }
 
     private async extractArchive(archivePath: string, targetDir: string): Promise<void> {
-        if (archivePath.endsWith('.tar.gz')) {
+        if (archivePath.endsWith('.tar.gz') || archivePath.endsWith('.tgz')) {
             await this.exec(`tar -xzf ${this.quotePath(archivePath)} -C ${this.quotePath(targetDir)}`);
             return;
         }
@@ -193,10 +270,18 @@ export class GitHubCliInstaller {
             return;
         }
 
-        // Not an archive — treat the downloaded file as a bare executable.
-        // Mark it executable so findBinary() can locate it.
+        // Bare executable — mark it executable so findBinary() can locate it.
         if (process.platform !== 'win32') {
             this.fs.chmodSync(archivePath, 0o755);
+        }
+    }
+
+    private async removeQuarantine(binaryPath: string): Promise<void> {
+        try {
+            await this.exec(`xattr -d com.apple.quarantine ${this.quotePath(binaryPath)}`);
+            logger.debug('Removed macOS quarantine attribute', { binaryPath });
+        } catch {
+            // Quarantine attribute may not be present — this is not an error
         }
     }
 
@@ -257,7 +342,7 @@ export class GitHubCliInstaller {
     }
 
     private getToolRoot(toolId: ToolId): string {
-        return path.join(os.homedir(), '.backbrain', 'tools', toolId);
+        return path.join(this.storagePath, toolId);
     }
 
     private getMarkerPath(toolId: ToolId): string {
