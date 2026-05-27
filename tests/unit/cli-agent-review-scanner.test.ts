@@ -695,11 +695,6 @@ describe('CliAgentReviewScanner', () => {
                 opencodeRunCount += 1;
 
                 if (opencodeRunCount === 1) {
-                    callback(null, asOpencodeEvents(JSON.stringify({ ready: true })), '');
-                    return { on: () => { } };
-                }
-
-                if (opencodeRunCount === 2) {
                     callback(null, asOpencodeEvents(JSON.stringify({
                         repoSummary: 'TypeScript service',
                         specialists: [{
@@ -713,7 +708,7 @@ describe('CliAgentReviewScanner', () => {
                     return { on: () => { } };
                 }
 
-                if (opencodeRunCount === 3) {
+                if (opencodeRunCount === 2) {
                     callback(null, asOpencodeEvents(JSON.stringify({
                         findings: [{
                             title: 'Untrusted shell input',

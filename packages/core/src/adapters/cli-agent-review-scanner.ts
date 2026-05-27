@@ -857,11 +857,22 @@ export class CliAgentReviewScanner implements SecurityScanner {
 
         switch (backend.id) {
             case 'codex':
-            case 'opencode':
                 return this.runBackend(backend, prompt, cwd, {
                     isReadinessProbe: true,
                     expectsJsonObject: true,
                 });
+            case 'opencode':
+                // opencode's LLM round-trip is too slow for a readiness probe
+                // (60 s timeout kills it before it finishes). Instead, just
+                // verify the binary is runnable and trust the user has API keys
+                // configured in their opencode config. Return the sentinel that
+                // checkBackendReady expects.
+                await this.execFileAsync(backend.config.binaryPath, ['--version'], {
+                    maxBuffer: 1024 * 1024,
+                    env: this.buildExecEnv(backend.id),
+                    timeout: 10000,
+                });
+                return '{"ready":true}';
             case 'gemini':
                 return this.runGeminiReadinessProbe(backend, cwd);
         }
@@ -960,19 +971,36 @@ export class CliAgentReviewScanner implements SecurityScanner {
             let timedOut = false;
             let responseText = '';
             let pendingLine = '';
-            let emittedResponseNotice = false;
-            const emittedProgress = new Set<string>();
+            let lastEmitted = '';
 
             const emitProgress = (line: string) => {
                 const clean = line
                     .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
                     .replace(/\s+/g, ' ')
                     .trim();
-                if (!clean || emittedProgress.has(clean)) {
+                if (!clean) {
                     return;
                 }
-                emittedProgress.add(clean);
+                // Only suppress exact consecutive duplicates (e.g. rapid flushes
+                // of the same stderr line). Repeated events with the same label
+                // but different positions in the stream (e.g. multiple step_start
+                // events) must all be forwarded so the terminal shows live activity.
+                if (clean === lastEmitted) {
+                    return;
+                }
+                lastEmitted = clean;
                 opts.onStderrLine(clean.length > 240 ? `${clean.slice(0, 237)}...` : clean);
+            };
+
+            const emitMultilineProgress = (value: string, options: { prefix?: string; maxLines?: number } = {}) => {
+                const lines = value.split(/\r?\n/).map(line => line.trimEnd()).filter(Boolean);
+                const maxLines = options.maxLines ?? 8;
+                for (const line of lines.slice(0, maxLines)) {
+                    emitProgress(options.prefix ? `${options.prefix}${line}` : line);
+                }
+                if (lines.length > maxLines) {
+                    emitProgress(`${options.prefix ?? ''}... ${lines.length - maxLines} more line(s)`);
+                }
             };
 
             const handleStdoutLine = (line: string) => {
@@ -990,29 +1018,47 @@ export class CliAgentReviewScanner implements SecurityScanner {
                         const text = typeof part.text === 'string' ? part.text : '';
                         if (text) {
                             responseText += text;
-                            if (!emittedResponseNotice) {
-                                emitProgress('Model response received.');
-                                emittedResponseNotice = true;
-                            }
+                            emitMultilineProgress(text, { prefix: 'assistant: ', maxLines: 12 });
                         }
                         return;
                     }
 
                     if (type === 'tool_use' || type === 'tool' || type === 'tool-call') {
                         const tool = String(part.tool || part.name || part.id || 'tool');
-                        const title = String(part.state?.title || part.title || part.description || '').trim();
-                        emitProgress(title ? `Using ${tool}: ${title}` : `Using ${tool}.`);
+                        const state = part.state && typeof part.state === 'object'
+                            ? part.state as Record<string, any>
+                            : {};
+                        const input = state.input && typeof state.input === 'object'
+                            ? state.input as Record<string, any>
+                            : {};
+                        const title = String(state.title || part.title || input.description || part.description || '').trim();
+                        const status = typeof state.status === 'string' ? state.status : '';
+                        const command = typeof input.command === 'string' ? input.command : '';
+                        const output = typeof state.output === 'string'
+                            ? state.output
+                            : typeof state.metadata?.output === 'string'
+                                ? state.metadata.output
+                                : '';
+
+                        emitProgress(title ? `${tool}: ${title}${status ? ` (${status})` : ''}` : `${tool}${status ? ` (${status})` : ''}`);
+                        if (command) {
+                            emitProgress(`$ ${command}`);
+                        }
+                        if (output) {
+                            emitMultilineProgress(output, { prefix: '  ', maxLines: 12 });
+                        }
                         return;
                     }
 
                     if (type === 'step_start' || type === 'step-start') {
-                        emitProgress('Started model step.');
+                        emitProgress('opencode: thinking');
                         return;
                     }
 
                     if (type === 'step_finish' || type === 'step-finish') {
                         const total = part.tokens?.total;
-                        emitProgress(typeof total === 'number' ? `Step complete (${total} tokens).` : 'Step complete.');
+                        const reason = typeof part.reason === 'string' ? part.reason : 'complete';
+                        emitProgress(typeof total === 'number' ? `opencode: ${reason} (${total} tokens)` : `opencode: ${reason}`);
                         return;
                     }
                 } catch {
