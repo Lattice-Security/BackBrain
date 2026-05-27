@@ -169,11 +169,13 @@ const ALL_SPECIALISTS = [
 type LogLineKind = 'thinking' | 'done' | 'assistant' | 'command' | 'output' | 'tool' | 'plain';
 
 function classifyLogLine(line: string): { kind: LogLineKind; prefix: string; body: string } {
-    // opencode: thinking  /  opencode: stop (N tokens)  /  opencode: complete
-    if (/^opencode:\s/i.test(line)) {
-        const body = line.replace(/^opencode:\s*/i, '');
+    // <backend>: thinking  /  <backend>: stop (N tokens)  /  <backend>: complete
+    if (/^(opencode|codex|gemini):\s/i.test(line)) {
+        const colonIdx = line.indexOf(':');
+        const prefix = line.slice(0, colonIdx);
+        const body = line.slice(colonIdx + 2);
         const isDone = /^(stop|complete|end|aggregat|verif)/i.test(body);
-        return { kind: isDone ? 'done' : 'thinking', prefix: 'opencode', body };
+        return { kind: isDone ? 'done' : 'thinking', prefix, body };
     }
     // assistant: <model text>
     if (/^assistant:\s/i.test(line)) {
@@ -215,7 +217,7 @@ const LOG_KIND_PREFIX_STYLES: Record<LogLineKind, React.CSSProperties> = {
     plain:    {},
 };
 
-const OpenCodeTerminal: React.FC<{ logs: string[] }> = ({ logs }) => {
+const OpenCodeTerminal: React.FC<{ logs: string[]; backend?: string }> = ({ logs, backend = 'opencode' }) => {
     const containerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -230,7 +232,7 @@ const OpenCodeTerminal: React.FC<{ logs: string[] }> = ({ logs }) => {
                 <span className="bb-terminal-dot bb-terminal-dot--red" />
                 <span className="bb-terminal-dot bb-terminal-dot--yellow" />
                 <span className="bb-terminal-dot bb-terminal-dot--green" />
-                <span className="bb-terminal-title">opencode</span>
+                <span className="bb-terminal-title">{backend}</span>
                 <span className="bb-terminal-count">{logs.length}</span>
             </div>
             <div ref={containerRef} className="bb-terminal-body">
@@ -328,14 +330,15 @@ const App = () => {
                         // Synthesise a phase-boundary line so the terminal always has
                         // content, even when the backend doesn't stream NDJSON events.
                         setAgentLogs(prev => {
+                            const b = message.backend || 'opencode';
                             const phaseLines: Record<string, string> = {
-                                'deterministic':    'opencode: running deterministic scanners',
-                                'agent-planner':    `opencode: planner running${message.backend ? ` (${message.backend})` : ''}`,
-                                'agent-specialists':`opencode: specialist agents reviewing code`,
-                                'agent-aggregator': 'opencode: aggregating findings',
-                                'agent-verification':'opencode: verifying findings',
-                                'degraded':         'opencode: completed with warnings',
-                                'complete':         'opencode: complete',
+                                'deterministic':    `${b}: running deterministic scanners`,
+                                'agent-planner':    `${b}: planner running`,
+                                'agent-specialists':`${b}: specialist agents reviewing code`,
+                                'agent-aggregator': `${b}: aggregating findings`,
+                                'agent-verification':`${b}: verifying findings`,
+                                'degraded':         `${b}: completed with warnings`,
+                                'complete':         `${b}: complete`,
                             };
                             const synthetic = phaseLines[message.phase];
                             if (!synthetic) return prev;
@@ -632,7 +635,7 @@ const App = () => {
 
                         {loading && configuration.agentReviewEnabled && (
                             <section className="bb-terminal-section">
-                                <OpenCodeTerminal logs={agentLogs} />
+                                <OpenCodeTerminal logs={agentLogs} backend={scanStatus?.backend || 'opencode'} />
                             </section>
                         )}
 

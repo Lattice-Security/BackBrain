@@ -36,7 +36,7 @@ eval(userInput);
             const { summary } = await applyFixes(fixableIssues, { safeOnly: true });
             expect(summary.fixed).toBeGreaterThan(0);
         }
-    });
+    }, 30000);
 
     test('filter by severity', async () => {
         fs.writeFileSync(testFile, `

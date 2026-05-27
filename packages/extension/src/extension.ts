@@ -206,7 +206,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration('backbrain');
     const aiReviewEnabled = config.get<boolean>('ai.agentReviewEnabled', false);
     const enabledAgentBackends = config.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']);
-    const preferredAgentBackend = config.get<'codex' | 'gemini' | 'opencode'>('ai.agentPreferredBackend', 'codex');
+    const preferredAgentBackend = config.get<'codex' | 'gemini' | 'opencode'>('ai.agentPreferredBackend', 'opencode');
     const agentScanDepth = config.get<AgentScanDepth>('ai.agentScanDepth', 'developer');
     const tierConfig = resolveScanDepthConfig(agentScanDepth);
 
@@ -412,7 +412,7 @@ export async function activate(context: vscode.ExtensionContext) {
       const latestDepth = latestConfig.get<AgentScanDepth>('ai.agentScanDepth', 'developer');
       const latestTier = resolveScanDepthConfig(latestDepth);
       const latestEnabledBackends = latestConfig.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']);
-      const latestPreferredBackend = latestConfig.get<'codex' | 'gemini' | 'opencode'>('ai.agentPreferredBackend', 'codex');
+      const latestPreferredBackend = latestConfig.get<'codex' | 'gemini' | 'opencode'>('ai.agentPreferredBackend', 'opencode');
       const latestReviewScope = latestConfig.get<'workspace' | 'changed-files' | 'both'>('ai.agentReviewScope', 'both');
       const latestMaxSpecialistsInspect = latestConfig.inspect<number>('ai.maxAgentSpecialists');
       const latestSpecialistConcurrencyInspect = latestConfig.inspect<number>('ai.agentSpecialistConcurrency');
