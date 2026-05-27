@@ -50,6 +50,17 @@ export interface AIProvider {
 // ============================================================================
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+export type IssueSourceType = 'deterministic' | 'agent-grounded' | 'agent-only';
+export type VerificationStatus = 'verified' | 'unverified' | 'not_applicable';
+export type SecurityScanPhase =
+    | 'deterministic'
+    | 'agent-planner'
+    | 'agent-specialists'
+    | 'agent-aggregator'
+    | 'agent-verification'
+    | 'complete'
+    | 'degraded'
+    | 'skipped';
 
 /** Severity levels ordered from most to least severe */
 export const SEVERITY_ORDER: readonly Severity[] = ['critical', 'high', 'medium', 'low', 'info'] as const;
@@ -85,6 +96,20 @@ export interface SecurityIssue {
     source?: string;
     /** Confidence for heuristic or AI-generated findings */
     confidence?: 'high' | 'medium' | 'low';
+    /** Normalized source bucket used for UI labeling */
+    sourceType?: IssueSourceType;
+    /** Whether the finding was grounded in deterministic findings */
+    groundedByDeterministicFindings?: boolean;
+    /** Verification outcome for agent-generated findings */
+    verificationStatus?: VerificationStatus;
+    /** Backend used to generate the finding when applicable */
+    backend?: string;
+    /** Source specialist roles for agent review */
+    sourceRoles?: string[];
+    /** Related deterministic finding IDs */
+    relatedIssueIds?: string[];
+    /** Whether the finding came from a degraded fallback path */
+    degraded?: boolean;
 }
 
 export interface SecurityFix {
@@ -116,6 +141,23 @@ export interface SecurityScanContext {
     deterministicIssues?: SecurityIssue[];
     /** Changed files relative to the repository root */
     changedFiles?: string[];
+    /** Requested scan paths before internal narrowing */
+    requestedPaths?: string[];
+    /** Optional status callback for scan progress and degraded-mode messaging */
+    reportStatus?: (update: SecurityScanStatusUpdate) => void;
+}
+
+export interface SecurityScanStatusUpdate {
+    phase: SecurityScanPhase;
+    level: 'info' | 'warn' | 'error';
+    message: string;
+    backend?: string;
+    scanner?: string;
+    degraded?: boolean;
+    /** Dynamic agent names determined by the planner, one per specialist */
+    agents?: string[];
+    /** Real-time log line from the agent CLI (e.g. opencode progress messages) */
+    agentLog?: string;
 }
 
 export interface SecurityScanner {

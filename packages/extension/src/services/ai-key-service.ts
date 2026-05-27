@@ -83,7 +83,7 @@ export class AIKeyService {
     async getStoredProviders(): Promise<string[]> {
         // Note: VS Code SecretStorage doesn't provide a way to list all keys
         // We would need to track this separately or check known providers
-        const knownProviders = ['openai', 'anthropic', 'google', 'xai', 'deepseek', 'openrouter'];
+        const knownProviders = ['openai', 'anthropic', 'google', 'xai', 'deepseek', 'nvidia', 'openrouter'];
         const storedProviders: string[] = [];
 
         for (const provider of knownProviders) {

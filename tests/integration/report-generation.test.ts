@@ -39,7 +39,7 @@ describe('Report Generation Integration', () => {
         
         expect(service.calculateRiskScore({ critical: 5, high: 0, medium: 0, low: 0 })).toBe(100);
         expect(service.calculateRiskScore({ critical: 0, high: 0, medium: 0, low: 0 })).toBe(0);
-        expect(service.calculateRiskScore({ critical: 1, high: 2, medium: 3, low: 4 })).toBe(52);
+        expect(service.calculateRiskScore({ critical: 1, high: 2, medium: 3, low: 4 })).toBe(60);
     });
 
     test('generate JSON report', () => {

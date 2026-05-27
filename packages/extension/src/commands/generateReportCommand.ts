@@ -5,11 +5,17 @@ import { ReportService, CodeIssue, ComplianceInfo } from '@backbrain/core';
 import { SeverityPanelProvider } from '../views/severity-panel-provider';
 import * as Handlebars from 'handlebars';
 
+interface GenerateReportCommandOptions {
+    format?: 'HTML Report' | 'JSON Data';
+    targetUri?: vscode.Uri;
+    openAfterSave?: boolean;
+}
+
 export function registerGenerateReportCommand(
     context: vscode.ExtensionContext,
     panelProvider: SeverityPanelProvider
 ): vscode.Disposable {
-    return vscode.commands.registerCommand('backbrain.generateReport', async () => {
+    return vscode.commands.registerCommand('backbrain.generateReport', async (options?: GenerateReportCommandOptions) => {
         const issues = panelProvider.getIssues();
 
         if (issues.length === 0) {
@@ -17,8 +23,7 @@ export function registerGenerateReportCommand(
             return;
         }
 
-        // Select format
-        const format = await vscode.window.showQuickPick(['HTML Report', 'JSON Data'], {
+        const format = options?.format ?? await vscode.window.showQuickPick(['HTML Report', 'JSON Data'], {
             placeHolder: 'Select report format'
         });
 
@@ -30,7 +35,7 @@ export function registerGenerateReportCommand(
             ? { 'HTML': ['html'] }
             : { 'JSON': ['json'] };
 
-        const uri = await vscode.window.showSaveDialog({
+        const uri = options?.targetUri ?? await vscode.window.showSaveDialog({
             defaultUri: vscode.Uri.file(path.join(vscode.workspace.rootPath || '', `${defaultName}.${format === 'HTML Report' ? 'html' : 'json'}`)),
             filters
         });
@@ -87,6 +92,10 @@ export function registerGenerateReportCommand(
                 }
 
                 fs.writeFileSync(uri.fsPath, content);
+
+                if (options?.openAfterSave === false) {
+                    return;
+                }
 
                 const selection = await vscode.window.showInformationMessage(
                     `Report saved to ${path.basename(uri.fsPath)}`,

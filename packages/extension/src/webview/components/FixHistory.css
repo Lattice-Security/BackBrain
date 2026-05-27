@@ -7,8 +7,8 @@
     flex-direction: column;
     gap: var(--spacing-sm, 8px);
     padding: var(--spacing-sm, 8px);
-    background-color: var(--vscode-sideBar-background, #252526);
-    border-top: 1px solid var(--vscode-panel-border, #454545);
+    background-color: var(--bb-color-background-secondary);
+    border-top: 1px solid var(--bb-color-border);
 }
 
 .fix-history__header {
@@ -21,7 +21,7 @@
 .fix-history__title {
     font-size: var(--font-size-sm, 12px);
     font-weight: 600;
-    color: var(--vscode-foreground, #cccccc);
+    color: var(--bb-color-foreground);
 }
 
 .fix-history__count {
@@ -40,7 +40,7 @@
     justify-content: space-between;
     align-items: center;
     padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-    background-color: var(--vscode-list-hoverBackground, #2a2d2e);
+    background-color: var(--bb-color-background-hover);
     border-radius: var(--border-radius-sm, 4px);
     font-size: var(--font-size-sm, 12px);
 }
@@ -56,7 +56,7 @@
 }
 
 .fix-history__item-summary {
-    color: var(--vscode-foreground, #cccccc);
+    color: var(--bb-color-foreground);
 }
 
 .fix-history__item-files {
@@ -79,15 +79,15 @@
     padding: 2px 8px;
     border: none;
     border-radius: var(--border-radius-sm, 4px);
-    background-color: var(--vscode-button-secondaryBackground, #3a3d41);
-    color: var(--vscode-button-secondaryForeground, #cccccc);
+    background-color: var(--bb-color-background-active);
+    color: var(--bb-color-foreground);
     font-size: var(--font-size-xs, 10px);
     cursor: pointer;
     transition: background-color 0.15s ease;
 }
 
 .fix-history__revert-button:hover {
-    background-color: var(--vscode-button-secondaryHoverBackground, #45494e);
+    background-color: var(--bb-color-background-secondary);
 }
 
 .fix-history__revert-button:disabled {

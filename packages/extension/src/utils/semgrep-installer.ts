@@ -7,6 +7,8 @@ import { createLogger } from '@backbrain/core';
 
 const logger = createLogger('SemgrepInstaller');
 
+export type SemgrepInstallProgressCallback = (message: string) => void;
+
 export class SemgrepInstaller {
     private execFn: typeof cp.exec;
     private fs: typeof fs;
@@ -123,15 +125,28 @@ export class SemgrepInstaller {
     /**
      * Install Semgrep into a private virtual environment
      */
-    public async install(): Promise<void> {
+    public async install(onProgress?: SemgrepInstallProgressCallback): Promise<void> {
         logger.info('Starting Semgrep installation...');
         const venvPath = this.getVenvPath();
         let venvCreated = false;
 
         try {
+            this.reportProgress(onProgress, 'Checking Python runtime...');
             // 1. Check Python availability and version
             const pythonCmd = await this.checkPythonAvailability();
             await this.checkPythonVersion(pythonCmd);
+
+            const installState = this.getInstallState();
+            if (installState.venvExists && !installState.semgrepExists) {
+                this.reportProgress(onProgress, 'Found incomplete Semgrep install. Repairing it...');
+                logger.warn('Detected incomplete Semgrep install', installState);
+            }
+
+            if (installState.venvExists && !installState.pipExists) {
+                this.reportProgress(onProgress, 'Recreating broken Python environment...');
+                logger.warn('Detected broken Semgrep venv missing pip, recreating', installState);
+                this.removeVenv(venvPath);
+            }
 
             // 2. Ensure ~/.backbrain directory exists (handle permissions)
             const backbrainDir = path.dirname(venvPath);
@@ -153,6 +168,7 @@ export class SemgrepInstaller {
 
             // 3. Create venv if it doesn't exist
             if (!this.fs.existsSync(venvPath)) {
+                this.reportProgress(onProgress, 'Creating isolated Python environment...');
                 logger.info('Creating virtual environment', { venvPath });
                 try {
                     await this.exec(`${pythonCmd} -m venv ${this.quotePath(venvPath)}`);
@@ -168,6 +184,7 @@ export class SemgrepInstaller {
 
             // 4. Upgrade pip first (prevents many installation issues)
             const pipPath = this.getVenvPipPath();
+            this.reportProgress(onProgress, 'Upgrading pip...');
             logger.info('Upgrading pip', { pipPath });
             try {
                 await this.exec(`${this.quotePath(pipPath)} install --upgrade pip`);
@@ -176,6 +193,7 @@ export class SemgrepInstaller {
             }
 
             // 5. Install semgrep with retry logic
+            this.reportProgress(onProgress, 'Installing Semgrep packages (this can take a minute)...');
             logger.info('Installing semgrep via pip', { pipPath });
 
             const maxRetries = 3;
@@ -191,6 +209,7 @@ export class SemgrepInstaller {
                     logger.warn(`Installation attempt ${attempt} failed`, { error: err });
 
                     if (attempt < maxRetries) {
+                        this.reportProgress(onProgress, `Install attempt ${attempt} failed. Retrying...`);
                         logger.info(`Retrying in 2 seconds... (${attempt}/${maxRetries})`);
                         await new Promise(resolve => setTimeout(resolve, 2000));
                     }
@@ -216,6 +235,7 @@ export class SemgrepInstaller {
 
             // 6. Verify installation
             const semgrepPath = this.getVenvSemgrepPath();
+            this.reportProgress(onProgress, 'Verifying Semgrep installation...');
             if (!this.fs.existsSync(semgrepPath)) {
                 throw new Error(
                     `Semgrep binary not found after installation at ${semgrepPath}. Installation may have failed silently.`
@@ -230,6 +250,8 @@ export class SemgrepInstaller {
                     `Semgrep installed but is not functional. Try reinstalling or install manually from https://semgrep.dev/docs/getting-started/`
                 );
             }
+
+            this.reportProgress(onProgress, 'Semgrep is ready.');
 
         } catch (error) {
             logger.error('Semgrep installation failed', { error });
@@ -246,6 +268,11 @@ export class SemgrepInstaller {
             
             throw error;
         }
+    }
+
+    public hasIncompleteInstall(): boolean {
+        const state = this.getInstallState();
+        return state.venvExists && !state.semgrepExists;
     }
 
     private getVenvPath(): string {
@@ -268,6 +295,30 @@ export class SemgrepInstaller {
         return isWin
             ? path.join(venv, 'Scripts', 'pip.exe')
             : path.join(venv, 'bin', 'pip');
+    }
+
+    private getInstallState(): { venvExists: boolean; pipExists: boolean; semgrepExists: boolean } {
+        const venvPath = this.getVenvPath();
+        const pipPath = this.getVenvPipPath();
+        const semgrepPath = this.getVenvSemgrepPath();
+
+        return {
+            venvExists: this.fs.existsSync(venvPath),
+            pipExists: this.fs.existsSync(pipPath),
+            semgrepExists: this.fs.existsSync(semgrepPath),
+        };
+    }
+
+    private removeVenv(venvPath: string): void {
+        if (!this.fs.existsSync(venvPath)) {
+            return;
+        }
+        this.fs.rmSync(venvPath, { recursive: true, force: true });
+    }
+
+    private reportProgress(callback: SemgrepInstallProgressCallback | undefined, message: string): void {
+        logger.info(message);
+        callback?.(message);
     }
 
     private exec(command: string, timeout: number = 30000): Promise<{ stdout: string; stderr: string }> {

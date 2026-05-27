@@ -12,7 +12,7 @@ describe('Performance Benchmarks', () => {
 
         const scanner = new VibeCodeScanner();
         const start = performance.now();
-        await scanner.scan(testFile);
+        await scanner.scan([testFile]);
         const duration = performance.now() - start;
 
         expect(duration).toBeLessThan(100);
@@ -30,7 +30,10 @@ describe('Performance Benchmarks', () => {
         const service = new SecurityService([new VibeCodeScanner()]);
         const start = performance.now();
         
-        await Promise.all(files.map(f => service.scanFile(f)));
+        await Promise.all(files.map(async (filePath) => {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            await service.scanFile(filePath, content);
+        }));
         
         const duration = performance.now() - start;
         expect(duration).toBeLessThan(5000);

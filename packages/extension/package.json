@@ -21,7 +21,9 @@
     "onCommand:backbrain.explainIssue",
     "onCommand:backbrain.suggestFix",
     "onCommand:backbrain.generateReport",
-    "onCommand:backbrain.setApiKey"
+"onCommand:backbrain.setApiKey",
+    "onCommand:backbrain.loginGemini",
+    "onCommand:backbrain.logoutGemini"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -53,6 +55,14 @@
       {
         "command": "backbrain.setApiKey",
         "title": "BackBrain: Set AI API Key"
+      },
+      {
+        "command": "backbrain.loginGemini",
+        "title": "BackBrain: Login to Gemini CLI"
+      },
+      {
+        "command": "backbrain.logoutGemini",
+        "title": "BackBrain: Logout from Gemini CLI"
       }
     ],
     "configuration": {
@@ -67,10 +77,28 @@
           "type": "array",
           "default": [
             "node_modules",
+            "bower_components",
+            "jspm_packages",
+            ".pnpm",
+            ".yarn",
             "dist",
             "build",
             ".git",
-            "out"
+            "out",
+            "coverage",
+            "vendor",
+            ".venv",
+            "venv",
+            "env",
+            ".tox",
+            "__pypackages__",
+            "site-packages",
+            ".gradle",
+            ".m2",
+            "target",
+            "Pods",
+            "Carthage",
+            "DerivedData"
           ],
           "description": "Paths to exclude from scanning"
         },
@@ -84,6 +112,29 @@
           "default": false,
           "description": "Trigger a full workspace scan when the extension activates"
         },
+        "backbrain.enabledScanners": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "semgrep",
+              "gitleaks",
+              "trivy",
+              "osv-scanner",
+              "vibe-code",
+              "tree-sitter"
+            ]
+          },
+          "default": [
+            "semgrep",
+            "gitleaks",
+            "trivy",
+            "osv-scanner",
+            "vibe-code",
+            "tree-sitter"
+          ],
+          "description": "Deterministic scanners enabled for BackBrain scans"
+        },
         "backbrain.ai.provider": {
           "type": "string",
           "enum": [
@@ -92,6 +143,7 @@
             "google",
             "xai",
             "deepseek",
+            "nvidia",
             "openrouter"
           ],
           "default": "openai",
@@ -154,19 +206,38 @@
           "default": "codex",
           "description": "Preferred CLI backend to use first for AI agent review"
         },
+        "backbrain.ai.agentScanDepth": {
+          "type": "string",
+          "enum": [
+            "developer",
+            "team",
+            "security",
+            "audit"
+          ],
+          "enumDescriptions": [
+            "Quick feedback during active development. Ensures free tier users don't hit rate limits.",
+            "Pre-commit review before pushing.",
+            "Security-conscious review of sensitive code.",
+            "Full spectrum audit before release or compliance gate."
+          ],
+          "default": "developer",
+          "description": "Control how thorough the agentic scan is. Higher tiers use more AI calls and take longer."
+        },
         "backbrain.ai.maxAgentSpecialists": {
           "type": "number",
           "default": 6,
           "minimum": 1,
           "maximum": 12,
-          "description": "Maximum number of specialist agents the lead planner may create"
+          "description": "Maximum number of specialist agents the lead planner may create",
+          "deprecationMessage": "Use backbrain.ai.agentScanDepth instead."
         },
         "backbrain.ai.agentSpecialistConcurrency": {
           "type": "number",
           "default": 3,
           "minimum": 1,
           "maximum": 12,
-          "description": "Maximum number of AI specialist reviewers to run in parallel"
+          "description": "Maximum number of AI specialist reviewers to run in parallel",
+          "deprecationMessage": "Use backbrain.ai.agentScanDepth instead."
         },
         "backbrain.ai.agentBinaryPathCodex": {
           "type": "string",
@@ -211,7 +282,7 @@
     }
   },
   "scripts": {
-    "build": "tsup && cp -f ../core/node_modules/web-tree-sitter/tree-sitter.wasm dist/ && bun run build:webview",
+    "build": "tsup && cp -f ../core/node_modules/web-tree-sitter/tree-sitter.wasm dist/ && cp -f ../core/node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm dist/ && cp -f ../core/node_modules/tree-sitter-typescript/tree-sitter-typescript.wasm dist/ && cp -f ../core/node_modules/tree-sitter-typescript/tree-sitter-tsx.wasm dist/ && bun run build:webview",
     "build:webview": "vite build",
     "watch": "tsup --watch",
     "typecheck": "tsc --noEmit && tsc -p src/webview/tsconfig.json --noEmit"
@@ -221,7 +292,8 @@
     "@vscode/webview-ui-toolkit": "^1.4.0",
     "handlebars": "^4.7.8",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "web-tree-sitter": "0.22.6"
   },
   "devDependencies": {
     "@types/handlebars": "^4.1.0",

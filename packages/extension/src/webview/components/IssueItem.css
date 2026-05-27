@@ -1,135 +1,244 @@
+/* ============================================================
+ * Issue Card Base
+ * ============================================================ */
 .issue-item {
-    padding: var(--bb-spacing-lg);
-    margin-bottom: var(--bb-spacing-sm);
-    border-radius: var(--bb-border-radius-md);
-    background-color: var(--bb-color-background-hover);
+    padding: var(--bb-spacing-md) var(--bb-spacing-lg);
+    margin-bottom: 2px;
+    background-color: transparent;
     cursor: pointer;
     transition: background-color var(--bb-transition-normal);
     border-left: 3px solid var(--severity-color, var(--bb-severity-info));
+    border-radius: 0 var(--bb-border-radius-md) var(--bb-border-radius-md) 0;
+    position: relative;
 }
 
 .issue-item:hover {
-    background-color: var(--bb-color-background-active);
+    background-color: var(--bb-color-background-secondary);
 }
 
+/* ============================================================
+ * Issue Header Row (severity badge + source chip + chevron)
+ * ============================================================ */
 .issue-item-header {
     display: flex;
     align-items: center;
-    gap: var(--bb-spacing-md);
+    gap: var(--bb-spacing-sm);
     margin-bottom: var(--bb-spacing-xs);
+    flex-wrap: wrap;
 }
 
 .severity-badge {
-    font-size: var(--bb-font-size-xs);
+    font-size: 10px;
     font-weight: var(--bb-font-weight-semibold);
     text-transform: uppercase;
     padding: 2px var(--bb-spacing-sm);
-    border-radius: var(--bb-border-radius-sm);
+    border-radius: var(--bb-border-radius-pill);
     color: var(--severity-color, var(--bb-severity-info));
     background-color: var(--severity-bg, var(--bb-severity-info-bg));
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
 }
 
+/* ============================================================
+ * Source Chips
+ * ============================================================ */
+.source-chip {
+    font-size: 10px;
+    font-weight: var(--bb-font-weight-medium);
+    padding: 2px var(--bb-spacing-sm);
+    border-radius: var(--bb-border-radius-pill);
+    border: 0.5px solid;
+    flex-shrink: 0;
+}
+
+/* Dark mode defaults */
+.source-chip--ai {
+    background: #0d2a45;
+    color: #3794ff;
+    border-color: #1a4a7a;
+}
+
+.source-chip--det {
+    background: #1a3010;
+    color: #73c991;
+    border-color: #2a4a20;
+}
+
+.source-chip--grounded {
+    background: #3d2a0a;
+    color: #cca700;
+    border-color: #5a3f0e;
+}
+
+/* Light mode overrides */
+.vscode-light .source-chip--ai {
+    background: #E6F1FB;
+    color: #185FA5;
+    border-color: #B5D4F4;
+}
+
+.vscode-light .source-chip--det {
+    background: #EAF3DE;
+    color: #3B6D11;
+    border-color: #C0DD97;
+}
+
+.vscode-light .source-chip--grounded {
+    background: #FAEEDA;
+    color: #854F0B;
+    border-color: #DFC98A;
+}
+
+/* ============================================================
+ * Chevron Button
+ * ============================================================ */
+.issue-chevron {
+    margin-left: auto;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--bb-color-foreground-muted);
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 2px;
+    display: flex;
+    align-items: center;
+    transform: rotate(0deg);
+    transition: transform var(--bb-transition-normal), color var(--bb-transition-fast);
+}
+
+.issue-chevron:hover {
+    color: var(--bb-color-foreground);
+}
+
+.issue-chevron--open {
+    transform: rotate(90deg);
+}
+
+/* ============================================================
+ * Issue Body
+ * ============================================================ */
 .issue-title {
+    font-size: 12px;
     font-weight: var(--bb-font-weight-medium);
     color: var(--bb-color-foreground);
+    margin-bottom: var(--bb-spacing-xs);
+    line-height: 1.4;
 }
 
 .issue-description {
-    font-size: var(--bb-font-size-sm);
+    font-size: 11px;
     color: var(--bb-color-foreground-muted);
     margin-bottom: var(--bb-spacing-sm);
+    line-height: 1.5;
 }
 
 .issue-location {
-    font-size: var(--bb-font-size-sm);
+    font-size: 11px;
     color: var(--bb-color-link);
     display: flex;
     align-items: center;
+    gap: 3px;
+    margin-bottom: var(--bb-spacing-sm);
 }
 
-.issue-meta {
-    display: flex;
-    gap: var(--bb-spacing-sm);
-    flex-wrap: wrap;
-    margin-top: var(--bb-spacing-sm);
+.issue-location__pin {
+    font-size: 10px;
+    opacity: 0.8;
 }
 
-.issue-meta__badge {
-    font-size: var(--bb-font-size-xs);
-    color: var(--bb-color-foreground-muted);
-    background-color: var(--bb-color-background-secondary);
-    border: 1px solid var(--bb-color-border);
-    border-radius: var(--bb-border-radius-pill);
-    padding: 2px var(--bb-spacing-sm);
-}
-
-.issue-meta__badge--agent {
-    color: var(--bb-color-link);
-    border-color: color-mix(in srgb, var(--bb-color-link) 40%, var(--bb-color-border));
-    background-color: color-mix(in srgb, var(--bb-color-link) 10%, var(--bb-color-background-secondary));
-}
-
-.issue-meta__badge--deterministic {
-    color: var(--bb-color-foreground);
-}
-
-.issue-snippet {
-    margin-top: var(--bb-spacing-md);
-    padding: var(--bb-spacing-sm) var(--bb-spacing-md);
-    font-size: var(--bb-font-size-sm);
-    font-family: var(--bb-font-family-mono);
-    background-color: var(--bb-color-background-secondary);
-    border-radius: var(--bb-border-radius-sm);
-    max-height: 200px;
-    overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
-}
-
-/* AI Action Buttons */
+/* ============================================================
+ * Action Buttons
+ * ============================================================ */
 .issue-actions {
     display: flex;
     gap: var(--bb-spacing-sm);
-    margin-top: var(--bb-spacing-md);
-    padding-top: var(--bb-spacing-sm);
-    border-top: 1px solid var(--bb-color-border);
+    margin-top: var(--bb-spacing-sm);
 }
 
 .action-button {
-    font-size: var(--bb-font-size-xs);
-    font-weight: var(--bb-font-weight-medium);
-    padding: var(--bb-spacing-xs) var(--bb-spacing-md);
-    border: 1px solid var(--bb-color-border);
-    border-radius: var(--bb-border-radius-sm);
-    background-color: var(--bb-color-background-secondary);
-    color: var(--bb-color-foreground);
+    font-size: 11px;
+    font-weight: var(--bb-font-weight-normal);
+    padding: 3px 9px;
+    border-radius: var(--bb-border-radius-lg);
     cursor: pointer;
-    transition: all var(--bb-transition-fast);
+    transition: opacity var(--bb-transition-fast);
+    flex-shrink: 0;
 }
 
 .action-button:hover {
-    background-color: var(--bb-color-background-active);
-    border-color: var(--bb-color-link);
+    opacity: 0.8;
 }
 
+/* Explain button — blue tint */
 .action-explain {
+    background-color: color-mix(in srgb, var(--bb-color-link) 12%, var(--bb-color-background));
+    border: 0.5px solid color-mix(in srgb, var(--bb-color-link) 40%, transparent);
     color: var(--bb-color-link);
 }
 
-.action-explain:hover {
-    background-color: var(--bb-color-link);
-    color: var(--bb-color-background);
-}
-
+/* Suggest Fix button — red tint */
 .action-fix {
-    color: var(--bb-severity-high);
+    background-color: color-mix(in srgb, var(--bb-severity-critical) 12%, var(--bb-color-background));
+    border: 0.5px solid color-mix(in srgb, var(--bb-severity-critical) 40%, transparent);
+    color: var(--bb-severity-critical);
 }
 
-.action-fix:hover {
-    background-color: var(--bb-severity-high);
-    color: var(--bb-color-background);
+/* ============================================================
+ * Expandable Evidence Section
+ * ============================================================ */
+.issue-evidence {
+    margin-top: var(--bb-spacing-md);
+    padding: var(--bb-spacing-md);
+    background-color: var(--bb-color-background-secondary);
+    border-radius: var(--bb-border-radius-md);
+    border: 1px solid var(--bb-color-border);
+    display: flex;
+    flex-direction: column;
+    gap: var(--bb-spacing-sm);
+    animation: evidenceFadeIn 0.15s ease-out;
 }
 
+@keyframes evidenceFadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.issue-evidence__label {
+    display: flex;
+    align-items: center;
+    gap: var(--bb-spacing-xs);
+    font-size: 11px;
+    font-weight: var(--bb-font-weight-medium);
+    color: var(--bb-color-link);
+}
+
+.issue-evidence__icon {
+    font-size: 12px;
+}
+
+.issue-evidence__text {
+    font-size: 11px;
+    color: var(--bb-color-foreground-muted);
+    line-height: 1.6;
+}
+
+.issue-evidence__code {
+    margin: 0;
+    padding: 6px 8px;
+    font-family: var(--bb-font-family-mono);
+    font-size: 10px;
+    background-color: var(--bb-color-background-secondary);
+    border-radius: var(--bb-border-radius-lg);
+    white-space: pre;
+    overflow-x: auto;
+    color: var(--bb-color-foreground);
+    border: 1px solid var(--bb-color-border);
+}
+
+/* ============================================================
+ * AI Explanation Panel
+ * ============================================================ */
 .issue-explanation {
     margin-top: var(--bb-spacing-md);
     padding: var(--bb-spacing-md);

@@ -1,0 +1,105 @@
+/* ============================================================
+ * ErrorBoundary wrapper
+ * ============================================================ */
+.error-boundary {
+    padding: var(--bb-spacing-xl);
+}
+
+.error-boundary__hint {
+    margin-top: var(--bb-spacing-lg);
+    font-size: var(--bb-font-size-sm);
+    color: var(--bb-color-foreground-muted);
+    text-align: center;
+}
+
+/* ============================================================
+ * ErrorCard — shared base
+ * ============================================================ */
+.error-card {
+    border-radius: var(--bb-border-radius-md);
+    border: 1px solid;
+    padding: var(--bb-spacing-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--bb-spacing-md);
+    margin-bottom: var(--bb-spacing-xl);
+    font-size: var(--bb-font-size-sm);
+}
+
+.error-card--red {
+    background-color: var(--bb-color-error-bg);
+    border-color: var(--bb-color-error);
+}
+
+.error-card--amber {
+    background-color: var(--vscode-inputValidation-warningBackground, rgba(191, 144, 0, 0.12));
+    border-color: var(--vscode-inputValidation-warningBorder, #cca700);
+}
+
+.error-card__header {
+    display: flex;
+    align-items: center;
+    gap: var(--bb-spacing-sm);
+}
+
+.error-card__icon {
+    font-size: 14px;
+    color: var(--bb-color-error);
+    flex-shrink: 0;
+}
+
+.error-card--amber .error-card__icon {
+    color: #cca700;
+}
+
+.error-card__title {
+    font-size: var(--bb-font-size-sm);
+    font-weight: var(--bb-font-weight-semibold);
+    color: var(--bb-color-foreground);
+}
+
+.error-card__message {
+    margin: 0;
+    font-size: var(--bb-font-size-sm);
+    color: var(--bb-color-foreground-muted);
+    line-height: 1.5;
+}
+
+.error-card__code {
+    margin: 0;
+    padding: var(--bb-spacing-sm) var(--bb-spacing-md);
+    background-color: var(--bb-color-background-secondary);
+    border-radius: var(--bb-border-radius-sm);
+    font-family: var(--bb-font-family-mono);
+    font-size: var(--bb-font-size-xs);
+    color: var(--bb-color-foreground);
+    white-space: pre;
+    overflow-x: auto;
+}
+
+.error-card__actions {
+    display: flex;
+    gap: var(--bb-spacing-sm);
+    flex-wrap: wrap;
+}
+
+.error-card__button {
+    font-size: var(--bb-font-size-sm);
+    padding: var(--bb-spacing-xs) var(--bb-spacing-md);
+    border-radius: var(--bb-border-radius-sm);
+    border: 1px solid var(--bb-color-border);
+    background-color: var(--bb-color-background-secondary);
+    color: var(--bb-color-foreground);
+    cursor: pointer;
+    transition: opacity var(--bb-transition-fast);
+}
+
+.error-card__button:hover {
+    opacity: 0.85;
+}
+
+.error-card__button--primary {
+    background-color: var(--bb-color-link);
+    border-color: var(--bb-color-link);
+    color: var(--bb-color-background);
+}

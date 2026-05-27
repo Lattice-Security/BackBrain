@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { dirname, join } from 'path';
 import { promisify } from 'util';
 
 import { CliAgentReviewScanner } from '../../packages/core/src/adapters/cli-agent-review-scanner';
 import type { SecurityIssue } from '../../packages/core/src/ports';
 
-function createExecMock() {
+function createExecMock(filePath = '/repo/app.py') {
     const calls: string[] = [];
     let codexExecCount = 0;
 
@@ -36,7 +39,7 @@ function createExecMock() {
                             name: 'auth-flow-reviewer',
                             rationale: 'Authentication logic is present',
                             focus: 'Review auth and authorization boundaries',
-                            paths: ['/repo/app.py'],
+                            paths: [filePath],
                             checks: ['check auth flows', 'check privilege escalation'],
                             relevantFindingIds: ['semgrep.auth'],
                         },
@@ -53,7 +56,7 @@ function createExecMock() {
                             description: 'User can access admin endpoint without role verification.',
                             severity: 'high',
                             confidence: 'medium',
-                            filePath: '/repo/app.py',
+                            filePath,
                             line: 24,
                             evidence: 'Route handler does not enforce admin role.',
                             remediation: 'Add explicit role enforcement before serving admin data.',
@@ -70,7 +73,7 @@ function createExecMock() {
                         description: 'User can access admin endpoint without role verification.',
                         severity: 'high',
                         confidence: 'medium',
-                        filePath: '/repo/app.py',
+                        filePath,
                         line: 24,
                         evidence: 'Route handler does not enforce admin role.',
                         remediation: 'Add explicit role enforcement before serving admin data.',
@@ -98,9 +101,49 @@ function createExecMock() {
     return { execMock, calls };
 }
 
+function createTempRepo(files: Record<string, string>) {
+    const root = mkdtempSync(join(tmpdir(), 'bb-agent-review-'));
+    for (const [relativePath, content] of Object.entries(files)) {
+        const absolutePath = join(root, relativePath);
+        mkdirSync(dirname(absolutePath), { recursive: true });
+        writeFileSync(absolutePath, content, 'utf8');
+    }
+    return root;
+}
+
 describe('CliAgentReviewScanner', () => {
     it('should run planner, specialist, and aggregator using an available backend', async () => {
-        const { execMock, calls } = createExecMock();
+        const repoRoot = createTempRepo({
+            'app.py': [
+                'def route():',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    pass',
+                '    # Route handler does not enforce admin role.',
+                '    return admin_data()',
+            ].join('\n'),
+        });
+        const appPath = join(repoRoot, 'app.py');
+        const { execMock, calls } = createExecMock(appPath);
         const scanner = new CliAgentReviewScanner({
             execFn: execMock as any,
             maxSpecialists: 4,
@@ -117,13 +160,13 @@ describe('CliAgentReviewScanner', () => {
                 title: 'Auth issue',
                 description: 'Potential auth issue',
                 severity: 'high',
-                filePath: '/repo/app.py',
+                filePath: appPath,
                 line: 10,
             },
         ];
 
-        const result = await scanner.scanWithContext(['/repo/app.py'], {
-            repositoryRoot: '/repo',
+        const result = await scanner.scanWithContext([appPath], {
+            repositoryRoot: repoRoot,
             deterministicIssues,
             changedFiles: ['app.py'],
         });
@@ -132,6 +175,7 @@ describe('CliAgentReviewScanner', () => {
         expect(result.issues[0]?.title).toBe('Missing authorization check');
         expect(result.issues[0]?.source).toContain('auth-flow-reviewer');
         expect(result.issues[0]?.confidence).toBe('medium');
+        expect(result.issues[0]?.verificationStatus).toBe('verified');
         expect(calls.filter(cmd => cmd.includes('codex exec')).length).toBe(4);
     });
 
@@ -202,8 +246,219 @@ describe('CliAgentReviewScanner', () => {
             },
         });
 
+        // Version check should pass
         const available = await scanner.isAvailable();
-        expect(available).toBe(false);
+        expect(available).toBe(true);
+
+        // But scan should skip it because readiness probe fails
+        const result = await scanner.scanWithContext(['/repo/app.py'], {
+            repositoryRoot: '/repo',
+            deterministicIssues: [],
+            changedFiles: [],
+        });
+        expect(result.issues).toEqual([]);
+        expect(result.scannerInfo).toContain('no backends available');
+    });
+
+    it('should run planner, specialist, and aggregator using the Gemini backend output envelope', async () => {
+        const calls: string[] = [];
+        const repoRoot = createTempRepo({
+            'server.js': [
+                'const express = require("express");',
+                'const app = express();',
+                'app.get("/", (req, res) => {',
+                '  res.send("ok");',
+                '});',
+                '',
+                'function ping(req) {',
+                '  // execSync interpolates req.query.host directly.',
+                '  return execSync(`ping ${req.query.host}`);',
+                '}',
+            ].join('\n'),
+        });
+        const serverPath = join(repoRoot, 'server.js');
+        let geminiCallCount = 0;
+
+        const execMock = (cmd: string, options: any, callback: any) => {
+            if (typeof options === 'function') {
+                callback = options;
+            }
+
+            calls.push(cmd);
+
+            if (cmd === 'gemini --version') {
+                callback(null, '1.2.3', '');
+                return { on: () => { } };
+            }
+
+            if (cmd.includes('gemini --approval-mode plan --output-format json -p')) {
+                geminiCallCount += 1;
+
+                if (geminiCallCount === 1) {
+                    callback(null, JSON.stringify({
+                        session_id: 'session-ready',
+                        response: '{"ready":true}',
+                    }), '');
+                    return { on: () => { } };
+                }
+
+                if (geminiCallCount === 2) {
+                    callback(null, JSON.stringify({
+                        session_id: 'session-plan',
+                        response: JSON.stringify({
+                            repoSummary: 'Express service with risky command execution',
+                            specialists: [
+                                {
+                                    name: 'command-injection-reviewer',
+                                    rationale: 'Shell execution is present',
+                                    focus: 'Review command execution and path handling',
+                                    paths: ['/repo/server.js'],
+                                    checks: ['check shell command construction'],
+                                    relevantFindingIds: ['semgrep.exec'],
+                                },
+                            ],
+                        }),
+                    }), '');
+                    return { on: () => { } };
+                }
+
+                if (geminiCallCount === 3) {
+                    callback(null, JSON.stringify({
+                        session_id: 'session-specialist',
+                        response: JSON.stringify({
+                            findings: [
+                                {
+                                    title: 'Unsanitized shell command',
+                                    description: 'User input reaches execSync without validation.',
+                                    severity: 'high',
+                                    confidence: 'high',
+                                    filePath: serverPath,
+                                    line: 8,
+                                    evidence: 'execSync interpolates req.query.host directly.',
+                                    remediation: 'Avoid shell execution or validate against an allowlist.',
+                                },
+                            ],
+                        }),
+                    }), '');
+                    return { on: () => { } };
+                }
+
+                callback(null, JSON.stringify({
+                    session_id: 'session-aggregate',
+                    response: JSON.stringify({
+                        findings: [
+                            {
+                                title: 'Unsanitized shell command',
+                                description: 'User input reaches execSync without validation.',
+                                severity: 'high',
+                                confidence: 'high',
+                                filePath: serverPath,
+                                line: 8,
+                                evidence: 'execSync interpolates req.query.host directly.',
+                                remediation: 'Avoid shell execution or validate against an allowlist.',
+                                sourceRoles: ['command-injection-reviewer'],
+                            },
+                        ],
+                    }),
+                }), '');
+                return { on: () => { } };
+            }
+
+            callback(new Error(`Unexpected command: ${cmd}`), '', '');
+            return { on: () => { } };
+        };
+
+        (execMock as any)[promisify.custom] = (cmd: string, options?: any) => new Promise((resolve, reject) => {
+            execMock(cmd, options, (error: Error | null, stdout: string, stderr: string) => {
+                if (error) {
+                    reject(error);
+                    return;
+                }
+                resolve({ stdout, stderr });
+            });
+        });
+
+        const scanner = new CliAgentReviewScanner({
+            execFn: execMock as any,
+            backends: {
+                codex: { enabled: false },
+                gemini: { enabled: true, binaryPath: 'gemini' },
+                opencode: { enabled: false },
+            },
+        });
+
+        const result = await scanner.scanWithContext([serverPath], {
+            repositoryRoot: repoRoot,
+            deterministicIssues: [
+                {
+                    ruleId: 'semgrep.exec',
+                    title: 'Exec issue',
+                    description: 'Potential shell execution risk',
+                    severity: 'high',
+                    filePath: serverPath,
+                    line: 8,
+                },
+            ],
+            changedFiles: ['server.js'],
+        });
+
+        expect(result.issues).toHaveLength(1);
+        expect(result.issues[0]?.ruleId).toBe('agent-review.unsanitized-shell-command');
+        expect(result.issues[0]?.confidence).toBe('high');
+        expect(result.issues[0]?.sourceType).toBe('agent-only');
+        expect(calls.filter(cmd => cmd.includes('gemini --approval-mode plan --output-format json -p')).length).toBe(4);
+    });
+
+    it('should classify Gemini CLI argument mismatches with a specific hint', async () => {
+        const execMock = (cmd: string, options: any, callback: any) => {
+            if (typeof options === 'function') {
+                callback = options;
+            }
+
+            if (cmd === 'gemini --version') {
+                callback(null, '1.2.3', '');
+                return { on: () => { } };
+            }
+
+            callback(
+                new Error('Invalid values:\n  Argument: approval-mode, Given: "plan", Choices: "default", "auto_edit", "yolo"\nUsage: gemini [options] [command]'),
+                '',
+                'Invalid values:\n  Argument: approval-mode, Given: "plan", Choices: "default", "auto_edit", "yolo"\nUsage: gemini [options] [command]'
+            );
+            return { on: () => { } };
+        };
+
+        (execMock as any)[promisify.custom] = (cmd: string, options?: any) => new Promise((resolve, reject) => {
+            execMock(cmd, options, (error: Error | null, stdout: string, stderr: string) => {
+                if (error) {
+                    reject(error);
+                    return;
+                }
+                resolve({ stdout, stderr });
+            });
+        });
+
+        const scanner = new CliAgentReviewScanner({
+            execFn: execMock as any,
+            backends: {
+                codex: { enabled: false },
+                gemini: { enabled: true, binaryPath: 'gemini' },
+                opencode: { enabled: false },
+            },
+        });
+
+        // Version check should pass
+        const available = await scanner.isAvailable();
+        expect(available).toBe(true);
+
+        // But scan should skip it because readiness probe fails
+        const result = await scanner.scanWithContext(['/repo/app.py'], {
+            repositoryRoot: '/repo',
+            deterministicIssues: [],
+            changedFiles: [],
+        });
+        expect(result.issues).toEqual([]);
+        expect(result.scannerInfo).toContain('no backends available');
     });
 
     it('should scope planner input to changed files when configured', async () => {
@@ -413,6 +668,116 @@ describe('CliAgentReviewScanner', () => {
         expect(available).toBe(true);
     });
 
+    it('should downgrade unverifiable AI findings instead of dropping the whole scan', async () => {
+        const repoRoot = createTempRepo({
+            'app.py': [
+                'def route():',
+                '    return "ok"',
+            ].join('\n'),
+        });
+        const appPath = join(repoRoot, 'app.py');
+        let codexExecCount = 0;
+
+        const execMock = (cmd: string, options: any, callback: any) => {
+            if (typeof options === 'function') {
+                callback = options;
+            }
+
+            if (cmd === 'codex --version') {
+                callback(null, '1.0.0', '');
+                return { on: () => { } };
+            }
+
+            if (cmd.includes('codex exec')) {
+                codexExecCount += 1;
+
+                if (codexExecCount === 1) {
+                    callback(null, JSON.stringify({ ready: true }), '');
+                    return { on: () => { } };
+                }
+
+                if (codexExecCount === 2) {
+                    callback(null, JSON.stringify({
+                        repoSummary: 'repo',
+                        specialists: [
+                            {
+                                name: 'reviewer',
+                                rationale: 'rationale',
+                                focus: 'focus',
+                                paths: [appPath],
+                                checks: ['check auth'],
+                            },
+                        ],
+                    }), '');
+                    return { on: () => { } };
+                }
+
+                if (codexExecCount === 3) {
+                    callback(null, JSON.stringify({
+                        findings: [{
+                            title: 'Suspicious route',
+                            description: 'desc',
+                            severity: 'medium',
+                            confidence: 'medium',
+                            filePath: appPath,
+                            line: 2,
+                            evidence: 'missing evidence text',
+                            remediation: 'fix it',
+                        }],
+                    }), '');
+                    return { on: () => { } };
+                }
+
+                callback(null, JSON.stringify({
+                    findings: [{
+                        title: 'Suspicious route',
+                        description: 'desc',
+                        severity: 'medium',
+                        confidence: 'medium',
+                        filePath: appPath,
+                        line: 2,
+                        evidence: 'missing evidence text',
+                        remediation: 'fix it',
+                        sourceRoles: ['reviewer'],
+                    }],
+                }), '');
+                return { on: () => { } };
+            }
+
+            callback(new Error(`Unexpected command: ${cmd}`), '', '');
+            return { on: () => { } };
+        };
+
+        (execMock as any)[promisify.custom] = (cmd: string, options?: any) => new Promise((resolve, reject) => {
+            execMock(cmd, options, (error: Error | null, stdout: string, stderr: string) => {
+                if (error) {
+                    reject(error);
+                    return;
+                }
+                resolve({ stdout, stderr });
+            });
+        });
+
+        const scanner = new CliAgentReviewScanner({
+            execFn: execMock as any,
+            backends: {
+                codex: { enabled: true, binaryPath: 'codex' },
+                gemini: { enabled: false },
+                opencode: { enabled: false },
+            },
+        });
+
+        const result = await scanner.scanWithContext([appPath], {
+            repositoryRoot: repoRoot,
+            deterministicIssues: [],
+            changedFiles: ['app.py'],
+        });
+
+        expect(result.issues).toHaveLength(1);
+        expect(result.issues[0]?.verificationStatus).toBe('unverified');
+        expect(result.issues[0]?.degraded).toBe(true);
+    });
+
     it('should prefer the configured backend when multiple are available', async () => {
         const calls: string[] = [];
         const execMock = (cmd: string, options: any, callback: any) => {
@@ -453,7 +818,7 @@ describe('CliAgentReviewScanner', () => {
 
         const scanner = new CliAgentReviewScanner({
             execFn: execMock as any,
-            preferredBackend: 'codex',
+            preferredBackend: 'opencode',
             backends: {
                 codex: { enabled: true, binaryPath: 'codex' },
                 gemini: { enabled: false },
@@ -461,8 +826,14 @@ describe('CliAgentReviewScanner', () => {
             },
         });
 
-        await scanner.isAvailable();
-        const readinessCalls = calls.filter(cmd => cmd.includes('exec') || cmd.includes('run'));
-        expect(readinessCalls[0]).toContain('codex exec');
+        await scanner.scanWithContext(['/repo/app.py'], {
+            repositoryRoot: '/repo',
+            deterministicIssues: [],
+            changedFiles: [],
+        });
+
+        const executionCalls = calls.filter(cmd => cmd.includes('exec') || cmd.includes('run'));
+        // The planner call (the 3rd call) should be opencode run because it is preferred
+        expect(executionCalls[2]).toContain('opencode run');
     });
 });

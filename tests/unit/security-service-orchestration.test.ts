@@ -133,15 +133,21 @@ describe('SecurityService orchestration', () => {
         const deterministic = new DeterministicTestScanner();
         const agent = new AgentTestScanner();
         const service = new SecurityService([deterministic, agent]);
+        const statuses: string[] = [];
 
         const result = await service.scan(['/repo/app.ts'], {
             scanners: [deterministic.name, agent.name],
+            onStatus: (update) => statuses.push(update.phase),
         });
 
         expect(result.issues.length).toBe(2);
         expect(agent.lastContext?.deterministicIssues?.length).toBe(1);
         expect(agent.lastContext?.deterministicIssues?.[0]?.ruleId).toBe('det.issue');
         expect(result.issues.some(issue => issue.source === 'agent-test-scanner')).toBe(true);
+        expect(result.issues.find(issue => issue.source === 'det-test-scanner')?.sourceType).toBe('deterministic');
+        expect(result.issues.find(issue => issue.source === 'agent-test-scanner')?.sourceType).toBe('agent-only');
+        expect(statuses).toContain('deterministic');
+        expect(statuses).toContain('complete');
     });
 
     it('should dedupe duplicate deterministic findings before passing them to agent review', async () => {

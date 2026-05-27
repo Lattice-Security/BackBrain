@@ -1,5 +1,13 @@
 import { SEVERITY_ORDER } from '../ports';
-import type { SecurityScanner, SecurityIssue, Severity, SecurityScanContext } from '../ports';
+import type {
+    IssueSourceType,
+    SecurityScanContext,
+    SecurityScanStatusUpdate,
+    SecurityIssue,
+    SecurityScanner,
+    Severity,
+    VerificationStatus,
+} from '../ports';
 import type { CodeIssue, CodeFix, CodeLocation, IssueCategory, IssueSeverity } from '../types';
 import { getLogger } from '../utils/logger';
 import { toError } from '../utils/result';
@@ -12,6 +20,8 @@ export interface SecurityScanOptions {
     files?: string[];
     /** Scanner names to use (if empty, uses all registered) */
     scanners?: string[];
+    /** Optional status callback for scan progress and degraded mode */
+    onStatus?: (update: SecurityScanStatusUpdate) => void;
 }
 
 export interface SecurityScanResult {
@@ -19,6 +29,13 @@ export interface SecurityScanResult {
     scannedFiles: string[];
     scanDurationMs: number;
     scannersUsed: string[];
+}
+
+export interface ScannerStatus {
+    id: string;
+    available: boolean;
+    scanKind: 'deterministic' | 'agent';
+    supportedExtensions: string[];
 }
 
 function normalizeText(value: string | undefined): string {
@@ -53,6 +70,10 @@ function mergeSecurityIssue(existing: SecurityIssue, incoming: SecurityIssue): S
             ? existing.description
             : incoming.description,
     };
+    const mergedSourceType = mergeSourceType(existing.sourceType, incoming.sourceType);
+    const mergedVerificationStatus = mergedSourceType === 'deterministic'
+        ? 'not_applicable'
+        : mergeVerificationStatus(existing.verificationStatus, incoming.verificationStatus);
 
     const mergedReferences = Array.from(new Set([...(existing.references || []), ...(incoming.references || [])]));
     if (mergedReferences.length > 0) {
@@ -72,6 +93,30 @@ function mergeSecurityIssue(existing: SecurityIssue, incoming: SecurityIssue): S
     const mergedSuggestedFix = existing.suggestedFix || incoming.suggestedFix;
     if (mergedSuggestedFix) {
         merged.suggestedFix = mergedSuggestedFix;
+    }
+    if (mergedSourceType) {
+        merged.sourceType = mergedSourceType;
+    }
+    if (mergedVerificationStatus) {
+        merged.verificationStatus = mergedVerificationStatus;
+    }
+    if (existing.groundedByDeterministicFindings || incoming.groundedByDeterministicFindings) {
+        merged.groundedByDeterministicFindings = true;
+    }
+    const mergedBackend = existing.backend || incoming.backend;
+    if (mergedBackend) {
+        merged.backend = mergedBackend;
+    }
+    const mergedSourceRoles = Array.from(new Set([...(existing.sourceRoles || []), ...(incoming.sourceRoles || [])]));
+    if (mergedSourceRoles.length > 0) {
+        merged.sourceRoles = mergedSourceRoles;
+    }
+    const mergedRelatedIssueIds = Array.from(new Set([...(existing.relatedIssueIds || []), ...(incoming.relatedIssueIds || [])]));
+    if (mergedRelatedIssueIds.length > 0) {
+        merged.relatedIssueIds = mergedRelatedIssueIds;
+    }
+    if (existing.degraded || incoming.degraded) {
+        merged.degraded = true;
     }
 
     return merged;
@@ -136,8 +181,84 @@ function toCodeIssue(issue: SecurityIssue): CodeIssue {
     if (issue.confidence !== undefined) {
         result.confidence = issue.confidence;
     }
+    if (issue.sourceType !== undefined) {
+        result.sourceType = issue.sourceType;
+    }
+    if (issue.groundedByDeterministicFindings !== undefined) {
+        result.groundedByDeterministicFindings = issue.groundedByDeterministicFindings;
+    }
+    if (issue.verificationStatus !== undefined) {
+        result.verificationStatus = issue.verificationStatus;
+    }
+    if (issue.backend !== undefined) {
+        result.backend = issue.backend;
+    }
+    if (issue.sourceRoles !== undefined) {
+        result.sourceRoles = issue.sourceRoles;
+    }
+    if (issue.relatedIssueIds !== undefined) {
+        result.relatedIssueIds = issue.relatedIssueIds;
+    }
+    if (issue.degraded !== undefined) {
+        result.degraded = issue.degraded;
+    }
 
     return result;
+}
+
+function mergeSourceType(
+    left?: IssueSourceType,
+    right?: IssueSourceType,
+): IssueSourceType | undefined {
+    const sourceTypes = [left, right];
+    if (sourceTypes.includes('deterministic')) {
+        return 'deterministic';
+    }
+    if (sourceTypes.includes('agent-grounded')) {
+        return 'agent-grounded';
+    }
+    if (sourceTypes.includes('agent-only')) {
+        return 'agent-only';
+    }
+    return undefined;
+}
+
+function mergeVerificationStatus(
+    left?: VerificationStatus,
+    right?: VerificationStatus,
+): VerificationStatus | undefined {
+    const rank: Record<VerificationStatus, number> = {
+        verified: 3,
+        not_applicable: 2,
+        unverified: 1,
+    };
+    const statuses = [left, right].filter((value): value is VerificationStatus => value !== undefined);
+    return statuses.sort((a, b) => rank[b] - rank[a])[0];
+}
+
+function emitStatus(
+    reporter: SecurityScanOptions['onStatus'] | SecurityScanContext['reportStatus'],
+    update: SecurityScanStatusUpdate,
+): void {
+    reporter?.(update);
+}
+
+function normalizeScannerIssues(scanner: SecurityScanner, issues: SecurityIssue[]): SecurityIssue[] {
+    return issues.map((issue) => {
+        const sourceType = issue.sourceType
+            ?? (scanner.scanKind === 'agent'
+                ? (issue.groundedByDeterministicFindings ? 'agent-grounded' : 'agent-only')
+                : 'deterministic');
+        const verificationStatus = issue.verificationStatus
+            ?? (sourceType === 'deterministic' ? 'not_applicable' : 'unverified');
+
+        return {
+            ...issue,
+            source: issue.source || scanner.name,
+            sourceType,
+            verificationStatus,
+        };
+    });
 }
 
 async function runScannerSafely(
@@ -153,13 +274,20 @@ async function runScannerSafely(
             : await scanner.scan(paths);
         logger.debug(`Scanner ${scanner.name} found ${result.issues.length} issues`);
         return {
-            issues: result.issues,
+            issues: normalizeScannerIssues(scanner, result.issues),
             scannedFiles: result.scannedFiles,
             usedScanner: scanner.name,
         };
     } catch (error) {
         logger.error(`${scanner.scanKind === 'agent' ? 'Agent scanner' : 'Scanner'} ${scanner.name} failed`, {
             error: toError(error),
+        });
+        emitStatus(context?.reportStatus, {
+            phase: 'degraded',
+            level: 'warn',
+            message: `${scanner.name} failed; continuing with remaining scanners.`,
+            scanner: scanner.name,
+            degraded: true,
         });
         return {
             issues: [],
@@ -202,12 +330,25 @@ export async function runSecurityScan(
                 scanners.push(scanner);
             } else {
                 logger.warn(`Scanner ${name} is not available`);
+                emitStatus(options.onStatus, {
+                    phase: 'degraded',
+                    level: 'warn',
+                    message: `${name} is unavailable. Coverage will be limited.`,
+                    scanner: name,
+                    degraded: true,
+                });
             }
         }
     }
 
     if (scanners.length === 0) {
         logger.warn('No security scanners available');
+        emitStatus(options.onStatus, {
+            phase: 'skipped',
+            level: 'warn',
+            message: 'No security scanners are available.',
+            degraded: true,
+        });
         return {
             issues: [],
             scannedFiles: [],
@@ -220,14 +361,28 @@ export async function runSecurityScan(
 
     const deterministicScanners = scanners.filter(scanner => scanner.scanKind !== 'agent');
     const agentScanners = scanners.filter(scanner => scanner.scanKind === 'agent');
+    const reportStatus = options.onStatus;
 
     // Run deterministic scanners first
     const allIssues: SecurityIssue[] = [];
     const allFiles = new Set<string>();
     const usedScanners: string[] = [];
 
+    if (deterministicScanners.length > 0) {
+        emitStatus(reportStatus, {
+            phase: 'deterministic',
+            level: 'info',
+            message: `Running ${deterministicScanners.length} deterministic scanner(s).`,
+        });
+    }
+
     const deterministicResults = await Promise.all(
-        deterministicScanners.map(scanner => runScannerSafely(scanner, paths, logger))
+        deterministicScanners.map(scanner => runScannerSafely(
+            scanner,
+            paths,
+            logger,
+            reportStatus ? { reportStatus } : undefined,
+        ))
     );
 
     for (const result of deterministicResults) {
@@ -242,6 +397,8 @@ export async function runSecurityScan(
 
     const agentContext: SecurityScanContext = {
         deterministicIssues: dedupedDeterministicIssues,
+        requestedPaths: paths,
+        ...(reportStatus ? { reportStatus } : {}),
     };
 
     for (const scanner of agentScanners) {
@@ -268,6 +425,11 @@ export async function runSecurityScan(
         issuesFound: codeIssues.length,
         filesScanned: allFiles.size,
         durationMs: duration,
+    });
+    emitStatus(reportStatus, {
+        phase: 'complete',
+        level: 'info',
+        message: `Scan complete: ${codeIssues.length} issue(s), ${usedScanners.length} scanner(s) used.`,
     });
 
     return {
@@ -307,25 +469,57 @@ export class SecurityService {
         });
     }
 
-    async scanFile(filePath: string, content: string): Promise<SecurityScanResult> {
+    /** Expose scanners for debug/step-through mode */
+    getScanners(): SecurityScanner[] {
+        return this.scanners;
+    }
+
+    async scanFile(filePath: string, content: string, options: SecurityScanOptions = {}): Promise<SecurityScanResult> {
         const issues: CodeIssue[] = [];
         const scannersUsed: string[] = [];
         const deterministicIssues: SecurityIssue[] = [];
+        const reportStatus = options.onStatus;
 
-        const deterministicScanners = this.scanners.filter(scanner => scanner.scanKind !== 'agent');
-        const agentScanners = this.scanners.filter(scanner => scanner.scanKind === 'agent');
+        const enabledScannerNames = options.scanners ? new Set(options.scanners) : null;
+        const selectedScanners = enabledScannerNames
+            ? this.scanners.filter(scanner => enabledScannerNames.has(scanner.name))
+            : this.scanners;
+        const deterministicScanners = selectedScanners.filter(scanner => scanner.scanKind !== 'agent');
+        const agentScanners = selectedScanners.filter(scanner => scanner.scanKind === 'agent');
+
+        if (deterministicScanners.length > 0) {
+            emitStatus(reportStatus, {
+                phase: 'deterministic',
+                level: 'info',
+                message: `Running ${deterministicScanners.length} deterministic scanner(s) on the current file.`,
+            });
+        }
 
         const deterministicResults = await Promise.all(
             deterministicScanners.map(async (scanner) => {
                 try {
                     const available = await scanner.isAvailable();
                     if (!available) {
+                        emitStatus(reportStatus, {
+                            phase: 'degraded',
+                            level: 'warn',
+                            message: `${scanner.name} is unavailable. Coverage will be limited.`,
+                            scanner: scanner.name,
+                            degraded: true,
+                        });
                         return { scannerName: scanner.name, issues: [] as SecurityIssue[] };
                     }
 
                     const scannerIssues = await scanner.scanFile(filePath, content);
-                    return { scannerName: scanner.name, issues: scannerIssues };
+                    return { scannerName: scanner.name, issues: normalizeScannerIssues(scanner, scannerIssues) };
                 } catch {
+                    emitStatus(reportStatus, {
+                        phase: 'degraded',
+                        level: 'warn',
+                        message: `${scanner.name} failed on the current file.`,
+                        scanner: scanner.name,
+                        degraded: true,
+                    });
                     return { scannerName: scanner.name, issues: [] as SecurityIssue[] };
                 }
             })
@@ -343,21 +537,37 @@ export class SecurityService {
 
         const agentContext: SecurityScanContext = {
             deterministicIssues: dedupedDeterministicIssues,
+            requestedPaths: [filePath],
+            ...(reportStatus ? { reportStatus } : {}),
         };
 
         for (const scanner of agentScanners) {
             try {
                 const available = await scanner.isAvailable();
                 if (!available) {
+                    emitStatus(reportStatus, {
+                        phase: 'degraded',
+                        level: 'warn',
+                        message: `${scanner.name} is unavailable. AI review was skipped.`,
+                        scanner: scanner.name,
+                        degraded: true,
+                    });
                     continue;
                 }
 
                 const result = scanner.scanWithContext
                     ? await scanner.scanWithContext([filePath], agentContext)
                     : await scanner.scan([filePath]);
-                issues.push(...dedupeSecurityIssues(result.issues).map(toCodeIssue));
+                issues.push(...dedupeSecurityIssues(normalizeScannerIssues(scanner, result.issues)).map(toCodeIssue));
                 scannersUsed.push(scanner.name);
             } catch {
+                emitStatus(reportStatus, {
+                    phase: 'degraded',
+                    level: 'warn',
+                    message: `${scanner.name} failed during AI review.`,
+                    scanner: scanner.name,
+                    degraded: true,
+                });
                 continue;
             }
         }
@@ -388,13 +598,41 @@ export class SecurityService {
      * Get all supported extensions from available scanners
      */
     async getSupportedExtensions(): Promise<string[]> {
+        const results = await Promise.all(this.scanners.map(async (scanner) => {
+            try {
+                const available = await scanner.isAvailable();
+                if (available) {
+                    return scanner.getSupportedExtensions();
+                }
+            } catch {
+                // scanner not available
+            }
+            return [] as string[];
+        }));
         const extensions = new Set<string>();
-        for (const scanner of this.scanners) {
-            const available = await scanner.isAvailable();
-            if (available) {
-                scanner.getSupportedExtensions().forEach(ext => extensions.add(ext));
+        for (const exts of results) {
+            for (const ext of exts) {
+                extensions.add(ext);
             }
         }
         return Array.from(extensions);
+    }
+
+    async getScannerStatuses(): Promise<ScannerStatus[]> {
+        const results = await Promise.all(this.scanners.map(async (scanner) => {
+            let available = false;
+            try {
+                available = await scanner.isAvailable();
+            } catch {
+                available = false;
+            }
+            return {
+                id: scanner.name,
+                available,
+                scanKind: scanner.scanKind === 'agent' ? 'agent' : 'deterministic',
+                supportedExtensions: scanner.getSupportedExtensions(),
+            } as ScannerStatus;
+        }));
+        return results;
     }
 }
