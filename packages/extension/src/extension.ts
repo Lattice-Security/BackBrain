@@ -184,22 +184,6 @@ async function ensureSemgrepInstalled(
   });
 }
 
-async function configureSemgrepScanner(installer: SemgrepInstaller, scanners: SecurityScanner[]): Promise<void> {
-  const isSemgrepAvailable = await installer.isAvailable();
-  if (!isSemgrepAvailable) {
-    logger.info('Semgrep is not available; Semgrep scanning will stay disabled until it is installed');
-    return;
-  }
-
-  const semgrepPath = installer.getSemgrepPath();
-  scanners.forEach((scanner) => {
-    if (scanner instanceof SemgrepScanner) {
-      scanner.setBinaryPath(semgrepPath);
-    }
-  });
-  logger.info('Semgrep found', { path: semgrepPath });
-}
-
 export async function activate(context: vscode.ExtensionContext) {
   // 1. Initialize VS Code specific logging immediately
   initVSCodeLogging(context);
