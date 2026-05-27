@@ -173,9 +173,9 @@ export class VercelAIAdapter implements AIProvider {
 
             if (result.usage) {
                 response.usage = {
-                    promptTokens: result.usage.promptTokens,
-                    completionTokens: result.usage.completionTokens,
-                    totalTokens: result.usage.totalTokens,
+                    promptTokens: result.usage.inputTokens ?? 0,
+                    completionTokens: result.usage.outputTokens ?? 0,
+                    totalTokens: result.usage.totalTokens ?? 0,
                 };
             }
 
