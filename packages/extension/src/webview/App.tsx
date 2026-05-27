@@ -172,7 +172,7 @@ function classifyLogLine(line: string): { kind: LogLineKind; prefix: string; bod
     // opencode: thinking  /  opencode: stop (N tokens)  /  opencode: complete
     if (/^opencode:\s/i.test(line)) {
         const body = line.replace(/^opencode:\s*/i, '');
-        const isDone = /^(stop|complete|end)/i.test(body);
+        const isDone = /^(stop|complete|end|aggregat|verif)/i.test(body);
         return { kind: isDone ? 'done' : 'thinking', prefix: 'opencode', body };
     }
     // assistant: <model text>
@@ -323,7 +323,26 @@ const App = () => {
                 case 'scanStatus':
                     setScanStatus(message);
                     if (message.agentLog) {
-                        setAgentLogs(prev => [...prev.slice(-49), message.agentLog!]);
+                        setAgentLogs(prev => [...prev.slice(-199), message.agentLog!]);
+                    } else {
+                        // Synthesise a phase-boundary line so the terminal always has
+                        // content, even when the backend doesn't stream NDJSON events.
+                        setAgentLogs(prev => {
+                            const phaseLines: Record<string, string> = {
+                                'deterministic':    'opencode: running deterministic scanners',
+                                'agent-planner':    `opencode: planner running${message.backend ? ` (${message.backend})` : ''}`,
+                                'agent-specialists':`opencode: specialist agents reviewing code`,
+                                'agent-aggregator': 'opencode: aggregating findings',
+                                'agent-verification':'opencode: verifying findings',
+                                'degraded':         'opencode: completed with warnings',
+                                'complete':         'opencode: complete',
+                            };
+                            const synthetic = phaseLines[message.phase];
+                            if (!synthetic) return prev;
+                            // Avoid repeating the same phase line consecutively
+                            if (prev[prev.length - 1] === synthetic) return prev;
+                            return [...prev.slice(-199), synthetic];
+                        });
                     }
                     break;
                 case 'configurationState':
@@ -611,7 +630,7 @@ const App = () => {
                             </section>
                         )}
 
-                        {loading && (
+                        {loading && configuration.agentReviewEnabled && (
                             <section className="bb-terminal-section">
                                 <OpenCodeTerminal logs={agentLogs} />
                             </section>
