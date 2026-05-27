@@ -4,27 +4,6 @@ import { VibeCodeScanner } from "../../packages/core/src/adapters/vibe-code-scan
 describe("VibeCodeScanner", () => {
   const scanner = new VibeCodeScanner();
 
-  it("should detect missing imports", async () => {
-    const content = `
-      fs.readFileSync('test.txt');
-    `;
-    const issues = await scanner.scanFile("test.ts", content);
-    const missingImport = issues.find(i => i.ruleId === 'vibe-code.missing-import');
-    expect(missingImport).toBeDefined();
-    expect(missingImport?.description).toContain("'fs' is used but not imported");
-  });
-
-  it("should detect inconsistent naming", async () => {
-    const content = `
-      function myTestFunction() {}
-      mytestfunction();
-    `;
-    const issues = await scanner.scanFile("test.ts", content);
-    const nameMismatch = issues.find(i => i.ruleId === 'vibe-code.name-mismatch');
-    expect(nameMismatch).toBeDefined();
-    expect(nameMismatch?.description).toContain("'mytestfunction' should be 'myTestFunction'");
-  });
-
   it("should detect unhandled promises", async () => {
     const content = `
       fetch('https://api.example.com');
@@ -161,16 +140,6 @@ function test(x) {
     const deadCode = issues.filter(i => i.ruleId === 'vibe-code.dead-code');
     // Should NOT find dead code for case 2 or default
     expect(deadCode.length).toBe(0);
-  });
-
-  it("should NOT register declarations from comments in naming check", async () => {
-    const content = `// const myVar = 5;
-myVar = 10;`;
-    const issues = await scanner.scanFile("test.ts", content);
-    // 'myVar' is not a real declaration (it's in a comment), so 'myvar(' should NOT
-    // produce a naming mismatch since there's no canonical declaration
-    const namingIssues = issues.filter(i => i.ruleId === 'vibe-code.name-mismatch');
-    expect(namingIssues.length).toBe(0);
   });
 
   it("should ignore patterns inside comments and strings", async () => {

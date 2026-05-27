@@ -46,35 +46,20 @@ export class VibeCodeScanner implements SecurityScanner {
     const issues: SecurityIssue[] = [];
     const lines = content.split('\n');
 
-    // Run rules based on type
+    // Run regex-based rules from vibe-rules.ts
     for (const rule of this.rules) {
       if (rule.type === 'regex') {
         issues.push(...this.runRegexRule(filePath, lines, rule));
-      } else if (rule.type === 'logic') {
-        // Custom logic for specific rules
-        switch (rule.id) {
-          case 'vibe-code.missing-import':
-            issues.push(...this.detectMissingImports(filePath, lines));
-            break;
-          case 'vibe-code.name-mismatch':
-            issues.push(...this.detectInconsistentNaming(filePath, lines));
-            break;
-          case 'vibe-code.unhandled-promise':
-            issues.push(...this.detectUnhandledPromises(filePath, lines));
-            break;
-        }
-      } else if (rule.type === 'ai') {
-        // AI rules are handled by the AI agent in Phase 9
-        // For now, we just skip them in the local scanner
       }
     }
 
-    // Run additional detectors (Phase 8.2)
+    // Run built-in detectors
+    issues.push(...this.detectUnhandledPromises(filePath, lines));
     issues.push(...this.detectDeadCode(filePath, lines));
     issues.push(...this.detectTypeMismatches(filePath, lines));
     issues.push(...await this.detectHallucinatedDeps(filePath, content));
 
-    return issues;
+    return issues.filter(i => i.confidence === 'high');
   }
 
   async scan(paths: string[]): Promise<ScanResult> {
@@ -133,6 +118,7 @@ export class VibeCodeScanner implements SecurityScanner {
           title: rule.title,
           description: rule.description,
           severity: rule.severity,
+          confidence: 'high',
           filePath,
           line: idx + 1,
           snippet: line.trim(),
@@ -152,104 +138,15 @@ export class VibeCodeScanner implements SecurityScanner {
       .replace(/(['"`])(?:(?=(\\?))\2.)*?\1/g, '""'); // Replace strings with empty ones
   }
 
-  private detectMissingImports(filePath: string, lines: string[]): SecurityIssue[] {
-    const issues: SecurityIssue[] = [];
-    const importedModules = new Set<string>();
-    const declaredNames = new Set<string>();
-
-    lines.forEach((line) => {
-      // ES6 imports (import X from '...', import { ... } from '...', import '...')
-      const es6Match = line.match(/import\s+(?:\{[^}]*\}|\*\s+as\s+\w+|\w+\s+(?:,\s*\{[^}]*\})?)?\s*from\s+['"]([^'"]+)['"]/);
-      if (es6Match?.[1]) {
-        importedModules.add(es6Match[1]);
-      }
-      // Side-effect imports: import '...'
-      const sideEffectMatch = line.match(/^import\s+['"]([^'"]+)['"]/);
-      if (sideEffectMatch?.[1]) {
-        importedModules.add(sideEffectMatch[1]);
-      }
-      // CommonJS require
-      const requireMatch = line.match(/(?:const|let|var)\s+\w+\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/);
-      if (requireMatch?.[1]) {
-        importedModules.add(requireMatch[1]);
-      }
-    });
-
-    // Track local declarations to avoid flagging them as modules
-    lines.forEach((line) => {
-      const decl = line.match(/(?:const|let|var|function)\s+(\w+)/);
-      if (decl?.[1]) declaredNames.add(decl[1]);
-    });
-
-    const commonModules = [
-      'fs', 'path', 'http', 'https', 'crypto', 'util', 'os', 'stream',
-      'child_process', 'events', 'url', 'querystring', 'zlib',
-      'axios', 'lodash', 'express', 'moment', 'chalk',
-    ];
-
-    lines.forEach((line, idx) => {
-      const code = this.stripCommentsAndStrings(line);
-      for (const mod of commonModules) {
-        const re = new RegExp(`\\b${mod}\\.`, 'i');
-        if (re.test(code) && !importedModules.has(mod) && !declaredNames.has(mod)) {
-          issues.push({
-            ruleId: 'vibe-code.missing-import',
-            title: 'Missing Import',
-            description: `Module '${mod}' is used but not imported`,
-            severity: 'high',
-            filePath,
-            line: idx + 1,
-            snippet: line.trim(),
-          });
-        }
-      }
-    });
-
-    return issues;
-  }
-
-  private detectInconsistentNaming(filePath: string, lines: string[]): SecurityIssue[] {
-    const issues: SecurityIssue[] = [];
-    const declarations = new Map<string, string>();
-
-    lines.forEach((line, idx) => {
-      const code = this.stripCommentsAndStrings(line);
-      const declMatch = code.match(/(?:const|let|var|function)\s+(\w+)/);
-      if (declMatch?.[1]) {
-        const name = declMatch[1];
-        declarations.set(name.toLowerCase(), name);
-      }
-
-      const usageMatches = code.matchAll(/\b(\w+)\(/g);
-      for (const match of usageMatches) {
-        const used = match[1];
-        if (!used) continue;
-        const canonical = declarations.get(used.toLowerCase());
-        if (canonical && canonical !== used) {
-          issues.push({
-            ruleId: 'vibe-code.name-mismatch',
-            title: 'Inconsistent Naming',
-            description: `'${used}' should be '${canonical}'`,
-            severity: 'medium',
-            filePath,
-            line: idx + 1,
-            snippet: line.trim(),
-          });
-        }
-      }
-    });
-
-    return issues;
-  }
-
   private detectUnhandledPromises(filePath: string, lines: string[]): SecurityIssue[] {
     const issues: SecurityIssue[] = [];
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
 
-      // Check if this line starts a promise call
-      const promiseCall = /(\bawait\s+)?\s*\b(fetch|axios)\s*[.(]/.exec(line);
+      // Check if this line includes a promise call
+      const trimmed = line.trim();
+      const promiseCall = /(\bawait\s+)?\s*\b(fetch|axios)\s*[.(]/.exec(trimmed);
       if (!promiseCall) continue;
 
       // If already awaited on the same line, it's handled
@@ -273,14 +170,18 @@ export class VibeCodeScanner implements SecurityScanner {
         continue;
       }
 
+      // Confidence: high if the call starts the line (standalone fire-and-forget)
+      const startsLine = promiseCall.index === 0;
+
       issues.push({
         ruleId: 'vibe-code.unhandled-promise',
         title: 'Unhandled Promise',
         description: 'Async operation without error handling',
         severity: 'high',
+        confidence: startsLine ? 'high' : 'medium',
         filePath,
         line: i + 1,
-        snippet: line.trim(),
+        snippet: trimmed,
       });
 
       i = endIdx;
@@ -295,25 +196,25 @@ export class VibeCodeScanner implements SecurityScanner {
   private detectDeadCode(filePath: string, lines: string[]): SecurityIssue[] {
     const issues: SecurityIssue[] = [];
 
-    // Track brace depth to handle block scope
+    // Track brace depth per line
+    const depthAtLine: number[] = [];
     let braceDepth = 0;
+    for (const line of lines) {
+      depthAtLine.push(braceDepth);
+      for (const char of line) {
+        if (char === '{') braceDepth++;
+        else if (char === '}') braceDepth--;
+      }
+    }
+
     let afterTerminator = false;
     let terminatorLine = 0;
+    let terminatorDepth = 0;
+    let terminatorText = '';
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
       const trimmed = line.trim();
-
-      // Count braces to track scope
-      for (const char of line) {
-        if (char === '{') {
-          braceDepth++;
-          afterTerminator = false; // New block starts
-        } else if (char === '}') {
-          braceDepth--;
-          afterTerminator = false; // Block ends
-        }
-      }
 
       // Reset afterTerminator if we hit a new case or default in a switch
       if (trimmed.startsWith('case ') || trimmed.startsWith('default:')) {
@@ -324,16 +225,36 @@ export class VibeCodeScanner implements SecurityScanner {
       if (/^\s*(return|throw|break|continue)\b/.test(trimmed) && !trimmed.includes('{')) {
         afterTerminator = true;
         terminatorLine = i + 1;
+        terminatorDepth = depthAtLine[i]!;
+        terminatorText = trimmed;
         continue;
       }
 
       // If we're after a terminator, check for code (not braces, comments, or empty lines)
       if (afterTerminator && trimmed && !trimmed.startsWith('//') && !trimmed.startsWith('/*') && trimmed !== '}' && trimmed !== '{') {
+        const flaggedDepth = depthAtLine[i]!;
+        const sameDepth = flaggedDepth === terminatorDepth;
+        const notTernary = !terminatorText.includes('?');
+        // Look ahead for catch/finally/else
+        let nextCode: string | null = null;
+        for (let k = i + 1; k < lines.length; k++) {
+          const n = lines[k]!.trim();
+          if (n && !n.startsWith('//') && !n.startsWith('/*')) {
+            nextCode = n;
+            break;
+          }
+        }
+        const notFollowedByHandler = nextCode === null ||
+          !/^(catch|finally|else|else\s+if)\b/.test(nextCode);
+
+        const confidence = sameDepth && notTernary && notFollowedByHandler ? 'high' : 'medium';
+
         issues.push({
           ruleId: 'vibe-code.dead-code',
           title: 'Dead Code',
           description: `Unreachable code after line ${terminatorLine}`,
           severity: 'medium',
+          confidence,
           filePath,
           line: i + 1,
           snippet: trimmed,
@@ -351,8 +272,9 @@ export class VibeCodeScanner implements SecurityScanner {
   private detectTypeMismatches(filePath: string, lines: string[]): SecurityIssue[] {
     const issues: SecurityIssue[] = [];
 
-    // Track variable types from declarations
+    // Track variable types and whether they came from a literal assignment
     const varTypes = new Map<string, 'string' | 'number' | 'array' | 'object' | 'unknown'>();
+    const literalVars = new Set<string>();
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
@@ -364,14 +286,22 @@ export class VibeCodeScanner implements SecurityScanner {
         const value = constMatch[2];
         if (/^['"`]/.test(value.trim())) {
           varTypes.set(varName, 'string');
+          literalVars.add(varName);
         } else if (/^\d/.test(value.trim())) {
           varTypes.set(varName, 'number');
+          literalVars.add(varName);
         } else if (/^\[/.test(value.trim())) {
           varTypes.set(varName, 'array');
+          literalVars.add(varName);
         } else if (/^\{/.test(value.trim())) {
           varTypes.set(varName, 'object');
+          literalVars.add(varName);
         }
       }
+
+      // Helper: confidence is high only if the variable was assigned a literal
+      const confidenceFor = (varName: string): 'high' | 'medium' =>
+        literalVars.has(varName) ? 'high' : 'medium';
 
       // Detect parseInt/parseFloat on variables we know are numbers
       const parseMatch = line.match(/parseInt\((\w+)[\),]|parseFloat\((\w+)[\),]/);
@@ -383,6 +313,7 @@ export class VibeCodeScanner implements SecurityScanner {
             title: 'Type Mismatch',
             description: `parseInt/parseFloat called on '${varName}' which appears to be a number`,
             severity: 'low',
+            confidence: confidenceFor(varName),
             filePath,
             line: i + 1,
             snippet: line.trim(),
@@ -401,6 +332,7 @@ export class VibeCodeScanner implements SecurityScanner {
             title: 'Type Mismatch',
             description: `'.length' accessed on '${varName}' which appears to be a ${type}`,
             severity: 'medium',
+            confidence: confidenceFor(varName),
             filePath,
             line: i + 1,
             snippet: line.trim(),
@@ -419,6 +351,7 @@ export class VibeCodeScanner implements SecurityScanner {
             title: 'Type Mismatch',
             description: `String method '${methodName}' called on '${varName}' which appears to be a number`,
             severity: 'high',
+            confidence: confidenceFor(varName),
             filePath,
             line: i + 1,
             snippet: line.trim(),
@@ -477,25 +410,28 @@ export class VibeCodeScanner implements SecurityScanner {
 
     if (importLines.length === 0) return issues;
 
-    // Try to find and read package.json
-    const packageJson = await this.findPackageJson(filePath);
-    if (!packageJson) return issues;
+    // Find ALL package.json files walking up to root
+    const allPackageJsons = await this.findAllPackageJson(filePath);
+    if (allPackageJsons.length === 0) return issues;
 
-    const allDeps = new Set([
-      ...Object.keys(packageJson.dependencies || {}),
-      ...Object.keys(packageJson.devDependencies || {}),
-      ...Object.keys(packageJson.peerDependencies || {}),
-      ...Object.keys(packageJson.optionalDependencies || {})
-    ]);
+    // Merge deps from all levels into one set
+    const allDeps = new Set<string>();
+    for (const pkg of allPackageJsons) {
+      for (const key of Object.keys(pkg.dependencies || {})) allDeps.add(key);
+      for (const key of Object.keys(pkg.devDependencies || {})) allDeps.add(key);
+      for (const key of Object.keys(pkg.peerDependencies || {})) allDeps.add(key);
+      for (const key of Object.keys(pkg.optionalDependencies || {})) allDeps.add(key);
+    }
 
-    // Check each import against dependencies
+    // Check each import against all discovered dependencies
     for (const { module: moduleName, line, snippet } of importLines) {
       if (!allDeps.has(moduleName)) {
         issues.push({
           ruleId: 'vibe-code.hallucinated-dep',
           title: 'Hallucinated Dependency',
-          description: `Module '${moduleName}' is imported but not found in package.json`,
+          description: `Module '${moduleName}' is imported but not found in any package.json`,
           severity: 'high',
+          confidence: 'high',
           filePath,
           line,
           snippet,
@@ -507,14 +443,20 @@ export class VibeCodeScanner implements SecurityScanner {
   }
 
   /**
-   * Find and parse the nearest package.json
+   * Find ALL package.json files walking up the directory tree to root
    */
-  private async findPackageJson(filePath: string): Promise<{
+  private async findAllPackageJson(filePath: string): Promise<Array<{
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
     optionalDependencies?: Record<string, string>;
-  } | null> {
+  }>> {
+    const results: Array<{
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
+    }> = [];
     let dir = path.dirname(filePath);
     const root = path.parse(dir).root;
 
@@ -522,12 +464,13 @@ export class VibeCodeScanner implements SecurityScanner {
       const pkgPath = path.join(dir, 'package.json');
       try {
         const content = await this.readFile(pkgPath);
-        return JSON.parse(content);
+        results.push(JSON.parse(content));
       } catch {
-        dir = path.dirname(dir);
+        // no package.json at this level
       }
+      dir = path.dirname(dir);
     }
 
-    return null;
+    return results;
   }
 }
