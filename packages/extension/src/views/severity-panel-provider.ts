@@ -14,17 +14,20 @@ import {
     toIssueData,
 } from '../webview/messages';
 import { getActiveProvider } from '../services/ai-adapter-factory';
+import { markFileAsNavigated } from '../utils/navigation-cooldown';
 
 const logger = createLogger('SeverityPanel');
 const execFileAsync = promisify(execFile);
 
-const SCANNER_METADATA: Record<string, { label: string; description: string }> = {
-    semgrep: { label: 'Semgrep', description: 'Static code analysis' },
-    gitleaks: { label: 'Gitleaks', description: 'Secret detection' },
-    trivy: { label: 'Trivy', description: 'Dependencies and IaC' },
-    'osv-scanner': { label: 'OSV', description: 'Open source vulnerabilities' },
-    'vibe-code': { label: 'Vibe Code', description: 'Project rules' },
-    'tree-sitter': { label: 'Tree-sitter', description: 'AST heuristics' },
+type ScanKind = 'source-file' | 'project-level';
+
+const SCANNER_METADATA: Record<string, { label: string; description: string; scanKind: ScanKind }> = {
+    semgrep: { label: 'Semgrep', description: 'Static code analysis', scanKind: 'source-file' },
+    gitleaks: { label: 'Gitleaks', description: 'Secret detection', scanKind: 'project-level' },
+    trivy: { label: 'Trivy', description: 'Dependencies and IaC', scanKind: 'project-level' },
+    'osv-scanner': { label: 'OSV', description: 'Open source vulnerabilities', scanKind: 'project-level' },
+    'vibe-code': { label: 'Vibe Code', description: 'Project rules', scanKind: 'source-file' },
+    'tree-sitter': { label: 'Tree-sitter', description: 'AST heuristics', scanKind: 'source-file' },
 };
 
 const DEFAULT_ENABLED_SCANNERS = Object.keys(SCANNER_METADATA);
@@ -641,36 +644,68 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             return;
         }
 
+        // Partition scanners by kind
+        const sourceFileScanners: string[] = [];
+        const projectLevelScanners: string[] = [];
+        for (const scanner of selectedScanners) {
+            const metadata = SCANNER_METADATA[scanner];
+            if (metadata?.scanKind === 'project-level') {
+                projectLevelScanners.push(scanner);
+            } else {
+                // source-file scanners + agent-review (not in metadata) both operate per-file
+                sourceFileScanners.push(scanner);
+            }
+        }
+
         if (this._debugMode) {
             await this._runDebugScan(scanQueue, selectedScanners, token);
         } else {
-            for (let i = 0; i < totalFiles; i += batchSize) {
-                if (token.isCancellationRequested) break;
+            // ── Project-level track: run once against workspace root ───────────
+            if (projectLevelScanners.length > 0 && totalFiles > 0) {
+                const workspaceFolders = vscode.workspace.workspaceFolders;
+                const workspaceRoot = workspaceFolders?.[0]?.uri.fsPath;
+                if (workspaceRoot) {
+                    logger.info('Running project-level scanners', { scanners: projectLevelScanners, root: workspaceRoot });
+                    const projectResults = await this._securityService.scan([workspaceRoot], {
+                        scanners: projectLevelScanners,
+                        onStatus: (update) => this.updateScanStatus(update),
+                    });
+                    const newIssues = projectResults.issues.map(toIssueData);
+                    this._issues.push(...newIssues);
+                    this._postMessage({ type: 'issuesUpdated', issues: newIssues });
+                }
+            }
 
-                const batch = scanQueue.slice(i, i + batchSize);
-                const batchStartTime = Date.now();
+            // ── Source-file track: existing 50-file batch loop ─────────────────
+            if (sourceFileScanners.length > 0) {
+                for (let i = 0; i < totalFiles; i += batchSize) {
+                    if (token.isCancellationRequested) break;
 
-                const results = await this._securityService.scan(batch, {
-                    scanners: selectedScanners,
-                    onStatus: (update) => this.updateScanStatus(update),
-                });
+                    const batch = scanQueue.slice(i, i + batchSize);
+                    const batchStartTime = Date.now();
 
-                const newIssues = results.issues.map(toIssueData);
-                this._issues.push(...newIssues);
+                    const results = await this._securityService.scan(batch, {
+                        scanners: sourceFileScanners,
+                        onStatus: (update) => this.updateScanStatus(update),
+                    });
 
-                scannedCount += batch.length;
-                const batchDuration = Date.now() - batchStartTime;
+                    const newIssues = results.issues.map(toIssueData);
+                    this._issues.push(...newIssues);
 
-                logger.debug(`Batch ${Math.floor(i / batchSize) + 1} complete: ${batch.length} files in ${batchDuration}ms`);
+                    scannedCount += batch.length;
+                    const batchDuration = Date.now() - batchStartTime;
 
-                this._postMessage({
-                    type: 'issuesUpdated',
-                    issues: newIssues,
-                    batchInfo: { current: scannedCount, total: totalFiles }
-                });
-                this._lastBatchProgress = { current: scannedCount, total: totalFiles };
+                    logger.debug(`Batch ${Math.floor(i / batchSize) + 1} complete: ${batch.length} files in ${batchDuration}ms`);
 
-                await new Promise(resolve => setTimeout(resolve, 5));
+                    this._postMessage({
+                        type: 'issuesUpdated',
+                        issues: newIssues,
+                        batchInfo: { current: scannedCount, total: totalFiles }
+                    });
+                    this._lastBatchProgress = { current: scannedCount, total: totalFiles };
+
+                    await new Promise(resolve => setTimeout(resolve, 5));
+                }
             }
         }
 
@@ -793,6 +828,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
      */
     private async _handleNavigateToIssue(filePath: string, line: number, column?: number): Promise<void> {
         try {
+            markFileAsNavigated(filePath);
             const uri = vscode.Uri.file(filePath);
             const document = await vscode.workspace.openTextDocument(uri);
             const editor = await vscode.window.showTextDocument(document, { preserveFocus: true });

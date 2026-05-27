@@ -26,6 +26,7 @@ import { initializeAIKeyService } from './services/ai-key-service';
 import { initializeFixHistoryService } from './services/fix-history-service';
 import { registerFixPreviewProvider } from './services/fix-preview-provider';
 import { GeminiCliInstaller } from './utils/gemini-cli-installer';
+import { isRecentlyNavigated } from './utils/navigation-cooldown';
 
 const logger = createLogger('Extension');
 
@@ -502,6 +503,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const triggerFileScan = async (document: vscode.TextDocument, delay: number = 0) => {
       if (document.uri.scheme !== 'file') return;
       if (!autoScanEnabled) return;
+      if (isRecentlyNavigated(document.uri.fsPath)) return;
 
       const filePath = document.uri.fsPath;
 
