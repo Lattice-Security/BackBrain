@@ -34,6 +34,44 @@ describe("VibeCodeScanner", () => {
     expect(unhandledPromise).toBeDefined();
   });
 
+  it("should NOT flag multi-line promise chains with .catch", async () => {
+    const content = `
+      fetch('https://api.example.com')
+        .then(res => res.json())
+        .catch(err => console.error(err));
+    `;
+    const issues = await scanner.scanFile("test.ts", content);
+    const unhandled = issues.filter(i => i.ruleId === 'vibe-code.unhandled-promise');
+    expect(unhandled.length).toBe(0);
+  });
+
+  it("should NOT flag awaited promises", async () => {
+    const content = `
+      const data = await fetch('https://api.example.com');
+    `;
+    const issues = await scanner.scanFile("test.ts", content);
+    const unhandled = issues.filter(i => i.ruleId === 'vibe-code.unhandled-promise');
+    expect(unhandled.length).toBe(0);
+  });
+
+  it("should NOT flag axios multi-line chains", async () => {
+    const content = `
+      axios.get('/api/data')
+        .then(response => response.data)
+        .catch(err => {});
+    `;
+    const issues = await scanner.scanFile("test.ts", content);
+    const unhandled = issues.filter(i => i.ruleId === 'vibe-code.unhandled-promise');
+    expect(unhandled.length).toBe(0);
+  });
+
+  it("should flag fetch without any handling", async () => {
+    const content = "fetch('https://api.example.com');";
+    const issues = await scanner.scanFile("test.ts", content);
+    const unhandled = issues.filter(i => i.ruleId === 'vibe-code.unhandled-promise');
+    expect(unhandled.length).toBe(1);
+  });
+
   it("should detect deprecated APIs via regex rule", async () => {
     const content = `
       class MyComponent extends React.Component {
@@ -123,6 +161,16 @@ function test(x) {
     const deadCode = issues.filter(i => i.ruleId === 'vibe-code.dead-code');
     // Should NOT find dead code for case 2 or default
     expect(deadCode.length).toBe(0);
+  });
+
+  it("should NOT register declarations from comments in naming check", async () => {
+    const content = `// const myVar = 5;
+myVar = 10;`;
+    const issues = await scanner.scanFile("test.ts", content);
+    // 'myVar' is not a real declaration (it's in a comment), so 'myvar(' should NOT
+    // produce a naming mismatch since there's no canonical declaration
+    const namingIssues = issues.filter(i => i.ruleId === 'vibe-code.name-mismatch');
+    expect(namingIssues.length).toBe(0);
   });
 
   it("should ignore patterns inside comments and strings", async () => {

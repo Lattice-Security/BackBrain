@@ -155,16 +155,43 @@ export class VibeCodeScanner implements SecurityScanner {
   private detectMissingImports(filePath: string, lines: string[]): SecurityIssue[] {
     const issues: SecurityIssue[] = [];
     const importedModules = new Set<string>();
+    const declaredNames = new Set<string>();
 
     lines.forEach((line) => {
-      const importMatch = line.match(/import\s+.*\s+from\s+['"]([^'"]+)['"]/);
-      if (importMatch?.[1]) importedModules.add(importMatch[1]);
+      // ES6 imports (import X from '...', import { ... } from '...', import '...')
+      const es6Match = line.match(/import\s+(?:\{[^}]*\}|\*\s+as\s+\w+|\w+\s+(?:,\s*\{[^}]*\})?)?\s*from\s+['"]([^'"]+)['"]/);
+      if (es6Match?.[1]) {
+        importedModules.add(es6Match[1]);
+      }
+      // Side-effect imports: import '...'
+      const sideEffectMatch = line.match(/^import\s+['"]([^'"]+)['"]/);
+      if (sideEffectMatch?.[1]) {
+        importedModules.add(sideEffectMatch[1]);
+      }
+      // CommonJS require
+      const requireMatch = line.match(/(?:const|let|var)\s+\w+\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/);
+      if (requireMatch?.[1]) {
+        importedModules.add(requireMatch[1]);
+      }
     });
 
-    const commonModules = ['fs', 'path', 'http', 'https', 'crypto', 'util'];
+    // Track local declarations to avoid flagging them as modules
+    lines.forEach((line) => {
+      const decl = line.match(/(?:const|let|var|function)\s+(\w+)/);
+      if (decl?.[1]) declaredNames.add(decl[1]);
+    });
+
+    const commonModules = [
+      'fs', 'path', 'http', 'https', 'crypto', 'util', 'os', 'stream',
+      'child_process', 'events', 'url', 'querystring', 'zlib',
+      'axios', 'lodash', 'express', 'moment', 'chalk',
+    ];
+
     lines.forEach((line, idx) => {
-      commonModules.forEach((mod) => {
-        if (line.includes(`${mod}.`) && !importedModules.has(mod)) {
+      const code = this.stripCommentsAndStrings(line);
+      for (const mod of commonModules) {
+        const re = new RegExp(`\\b${mod}\\.`, 'i');
+        if (re.test(code) && !importedModules.has(mod) && !declaredNames.has(mod)) {
           issues.push({
             ruleId: 'vibe-code.missing-import',
             title: 'Missing Import',
@@ -175,7 +202,7 @@ export class VibeCodeScanner implements SecurityScanner {
             snippet: line.trim(),
           });
         }
-      });
+      }
     });
 
     return issues;
@@ -186,13 +213,14 @@ export class VibeCodeScanner implements SecurityScanner {
     const declarations = new Map<string, string>();
 
     lines.forEach((line, idx) => {
-      const declMatch = line.match(/(?:const|let|var|function)\s+(\w+)/);
+      const code = this.stripCommentsAndStrings(line);
+      const declMatch = code.match(/(?:const|let|var|function)\s+(\w+)/);
       if (declMatch?.[1]) {
         const name = declMatch[1];
         declarations.set(name.toLowerCase(), name);
       }
 
-      const usageMatches = line.matchAll(/\b(\w+)\(/g);
+      const usageMatches = code.matchAll(/\b(\w+)\(/g);
       for (const match of usageMatches) {
         const used = match[1];
         if (!used) continue;
@@ -217,21 +245,46 @@ export class VibeCodeScanner implements SecurityScanner {
   private detectUnhandledPromises(filePath: string, lines: string[]): SecurityIssue[] {
     const issues: SecurityIssue[] = [];
 
-    lines.forEach((line, idx) => {
-      if (line.includes('fetch(') || line.includes('axios.')) {
-        if (!line.includes('await') && !line.includes('.catch') && !line.includes('.then')) {
-          issues.push({
-            ruleId: 'vibe-code.unhandled-promise',
-            title: 'Unhandled Promise',
-            description: 'Async operation without error handling',
-            severity: 'high',
-            filePath,
-            line: idx + 1,
-            snippet: line.trim(),
-          });
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+
+      // Check if this line starts a promise call
+      const promiseCall = /(\bawait\s+)?\s*\b(fetch|axios)\s*[.(]/.exec(line);
+      if (!promiseCall) continue;
+
+      // If already awaited on the same line, it's handled
+      if (promiseCall[1]) continue;
+
+      // Collect dot-chained continuation lines (.then, .catch, etc.)
+      let endIdx = i;
+      for (let j = i + 1; j < lines.length; j++) {
+        const next = lines[j]!;
+        if (/^\s*\.\s*\w+\s*[.(]/.test(next)) {
+          endIdx = j;
+        } else {
+          break;
         }
       }
-    });
+
+      // Check the entire expression for handling (await at start, .then, .catch)
+      const fullExpr = lines.slice(i, endIdx + 1).join('\n');
+      if (/\bawait\b/.test(fullExpr) || /\.then\s*\(/.test(fullExpr) || /\.catch\s*\(/.test(fullExpr)) {
+        i = endIdx;
+        continue;
+      }
+
+      issues.push({
+        ruleId: 'vibe-code.unhandled-promise',
+        title: 'Unhandled Promise',
+        description: 'Async operation without error handling',
+        severity: 'high',
+        filePath,
+        line: i + 1,
+        snippet: line.trim(),
+      });
+
+      i = endIdx;
+    }
 
     return issues;
   }
@@ -304,8 +357,8 @@ export class VibeCodeScanner implements SecurityScanner {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
 
-      // Track type from initialization
-      const constMatch = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*(.+)/);
+      // Track type from initialization (stop at first semicolon to avoid grabbing sibling statements)
+      const constMatch = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*([^;]+)/);
       if (constMatch && constMatch[1] && constMatch[2]) {
         const varName = constMatch[1];
         const value = constMatch[2];
