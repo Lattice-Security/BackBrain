@@ -28,6 +28,77 @@ const SCANNER_METADATA: Record<string, { label: string; description: string }> =
 };
 
 const DEFAULT_ENABLED_SCANNERS = Object.keys(SCANNER_METADATA);
+const DEPENDENCY_SCANNERS = new Set(['trivy', 'osv-scanner']);
+const DEFAULT_EXCLUDED_DIRECTORIES = [
+    'node_modules',
+    'bower_components',
+    'jspm_packages',
+    '.pnpm',
+    '.yarn',
+    '.git',
+    'dist',
+    'build',
+    'out',
+    '.vscode',
+    'coverage',
+    'vendor',
+    '.venv',
+    'venv',
+    'env',
+    '.tox',
+    '__pypackages__',
+    'site-packages',
+    '.gradle',
+    '.m2',
+    'target',
+    'Pods',
+    'Carthage',
+    'DerivedData',
+];
+const INSTALLED_DEPENDENCY_DIRECTORIES = new Set(DEFAULT_EXCLUDED_DIRECTORIES.map(name => name.toLowerCase()));
+const DEPENDENCY_MANIFEST_NAMES = new Set([
+    'package.json',
+    'package-lock.json',
+    'npm-shrinkwrap.json',
+    'bun.lock',
+    'bun.lockb',
+    'yarn.lock',
+    'pnpm-lock.yaml',
+    'composer.json',
+    'composer.lock',
+    'Gemfile',
+    'gemfile',
+    'Gemfile.lock',
+    'gemfile.lock',
+    'Cargo.toml',
+    'cargo.toml',
+    'Cargo.lock',
+    'cargo.lock',
+    'go.mod',
+    'go.sum',
+    'requirements.txt',
+    'pyproject.toml',
+    'poetry.lock',
+    'Pipfile',
+    'pipfile',
+    'Pipfile.lock',
+    'pipfile.lock',
+    'pdm.lock',
+    'uv.lock',
+    'pom.xml',
+    'build.gradle',
+    'build.gradle.kts',
+    'gradle.lockfile',
+    'packages.lock.json',
+    'pubspec.yaml',
+    'pubspec.lock',
+]);
+const DEPENDENCY_MANIFEST_GLOB = `**/{${Array.from(DEPENDENCY_MANIFEST_NAMES).join(',')}}`;
+
+interface ScanPlan {
+    sourcePaths: string[];
+    dependencyPaths: string[];
+}
 
 const AGENT_BACKENDS: Record<AgentBackendId, { label: string; description: string; binarySetting: string; defaultBinary: string }> = {
     codex: {
@@ -57,6 +128,34 @@ const SCAN_DEPTH_LABELS: Record<AgentScanDepth, string> = {
     security: 'Security Scan',
     audit: 'Audit Scan',
 };
+
+function toPathSegments(filePath: string): string[] {
+    return filePath.split(/[\\/]+/).filter(Boolean);
+}
+
+function getBaseName(filePath: string): string {
+    const segments = toPathSegments(filePath);
+    return segments[segments.length - 1] || filePath;
+}
+
+function isInsideInstalledDependencyDirectory(filePath: string): boolean {
+    return toPathSegments(filePath)
+        .slice(0, -1)
+        .some(segment => INSTALLED_DEPENDENCY_DIRECTORIES.has(segment.toLowerCase()));
+}
+
+function isDependencyManifest(filePath: string): boolean {
+    const baseName = getBaseName(filePath).toLowerCase();
+    return DEPENDENCY_MANIFEST_NAMES.has(baseName) || /^requirements[-\w]*\.txt$/.test(baseName);
+}
+
+function dedupePaths(paths: string[]): string[] {
+    return Array.from(new Set(paths));
+}
+
+function buildExcludeGlob(excludePaths: string[]): string {
+    return `**/{${excludePaths.join(',')}}/**`;
+}
 
 export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'backbrain.severityPanel';
@@ -448,8 +547,8 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         }
 
         try {
-            const scanQueue = await this._resolveScanPaths(target);
-            await this._scanPaths(scanQueue, target);
+            const scanPlan = await this._resolveScanPlan(target);
+            await this._scanPaths(scanPlan, target);
         } catch (error) {
             logger.error('Scan failed', { error });
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -461,12 +560,13 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async _resolveScanPaths(target: Exclude<ScanTarget, 'file'>): Promise<string[]> {
+    private async _resolveScanPlan(target: Exclude<ScanTarget, 'file'>): Promise<ScanPlan> {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders || workspaceFolders.length === 0) {
             throw new Error('No workspace folder open');
         }
         const root = workspaceFolders[0]!.uri;
+        const excludeGlob = this._getScanExcludeGlob();
 
         if (target === 'custom') {
             const selected = await vscode.window.showOpenDialog({
@@ -476,7 +576,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                 defaultUri: root,
                 openLabel: 'Scan',
             });
-            return (selected || []).filter(uri => uri.scheme === 'file').map(uri => uri.fsPath);
+            return this._resolveCustomScanPlan(selected || [], excludeGlob);
         }
 
         if (target === 'changed') {
@@ -486,11 +586,12 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                     timeout: 10000,
                     maxBuffer: 1024 * 1024,
                 });
-                return stdout
+                const changedPaths = stdout
                     .split(/\r?\n/)
                     .map(line => line.trim())
                     .filter(Boolean)
                     .map(relativePath => vscode.Uri.joinPath(root, relativePath).fsPath);
+                return this._toScanPlan(changedPaths);
             } catch (error) {
                 logger.warn('Failed to resolve changed files for scan', { error });
                 throw new Error('Could not determine changed files for this workspace.');
@@ -502,14 +603,12 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         const extensionPattern = extensions.map(ext => ext.replace('.', '')).join(',');
         const globPattern = `**/*.{${extensionPattern}}`;
 
-        const config = vscode.workspace.getConfiguration('backbrain');
-        const defaultExcludes = ['node_modules', 'dist', 'build', '.git', 'out', '.vscode'];
-        const userExcludes = config.get<string[]>('excludePaths', []);
-        const excludePaths = Array.from(new Set([...defaultExcludes, ...userExcludes]));
-        const excludeGlob = `**/{${excludePaths.join(',')}}/**`;
         logger.debug(`Using exclude pattern: ${excludeGlob}`);
 
-        const files = await vscode.workspace.findFiles(globPattern, excludeGlob, 5000);
+        const [files, dependencyFiles] = await Promise.all([
+            vscode.workspace.findFiles(globPattern, excludeGlob, 5000),
+            vscode.workspace.findFiles(DEPENDENCY_MANIFEST_GLOB, excludeGlob, 1000),
+        ]);
         const activeEditor = vscode.window.activeTextEditor;
         const activePath = (
             activeEditor &&
@@ -543,10 +642,63 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             }
         });
 
-        return scanQueue;
+        return {
+            sourcePaths: this._filterSourcePaths(scanQueue),
+            dependencyPaths: dedupePaths(dependencyFiles.map(uri => uri.fsPath).filter(path => !isInsideInstalledDependencyDirectory(path))),
+        };
     }
 
-    private async _scanPaths(scanQueue: string[], target: ScanTarget): Promise<void> {
+    private _getScanExcludeGlob(): string {
+        const config = vscode.workspace.getConfiguration('backbrain');
+        const userExcludes = config.get<string[]>('excludePaths', []);
+        const excludePaths = Array.from(new Set([...DEFAULT_EXCLUDED_DIRECTORIES, ...userExcludes]));
+        return buildExcludeGlob(excludePaths);
+    }
+
+    private async _resolveCustomScanPlan(selected: readonly vscode.Uri[], excludeGlob: string): Promise<ScanPlan> {
+        const extensions = await this._securityService.getSupportedExtensions();
+        const extensionPattern = extensions.map(ext => ext.replace('.', '')).join(',');
+        const globPattern = `**/*.{${extensionPattern}}`;
+        const sourcePaths: string[] = [];
+        const dependencyPaths: string[] = [];
+
+        for (const uri of selected.filter(item => item.scheme === 'file')) {
+            const stat = await vscode.workspace.fs.stat(uri);
+            if (stat.type === vscode.FileType.Directory) {
+                const [files, dependencyFiles] = await Promise.all([
+                    vscode.workspace.findFiles(new vscode.RelativePattern(uri, globPattern), excludeGlob, 5000),
+                    vscode.workspace.findFiles(new vscode.RelativePattern(uri, DEPENDENCY_MANIFEST_GLOB), excludeGlob, 1000),
+                ]);
+                sourcePaths.push(...files.map(file => file.fsPath));
+                dependencyPaths.push(...dependencyFiles.map(file => file.fsPath));
+                continue;
+            }
+
+            sourcePaths.push(uri.fsPath);
+            if (isDependencyManifest(uri.fsPath)) {
+                dependencyPaths.push(uri.fsPath);
+            }
+        }
+
+        return {
+            sourcePaths: this._filterSourcePaths(sourcePaths),
+            dependencyPaths: dedupePaths(dependencyPaths.filter(path => !isInsideInstalledDependencyDirectory(path))),
+        };
+    }
+
+    private _toScanPlan(paths: string[]): ScanPlan {
+        const filteredPaths = paths.filter(path => !isInsideInstalledDependencyDirectory(path));
+        return {
+            sourcePaths: this._filterSourcePaths(filteredPaths),
+            dependencyPaths: dedupePaths(filteredPaths.filter(isDependencyManifest)),
+        };
+    }
+
+    private _filterSourcePaths(paths: string[]): string[] {
+        return dedupePaths(paths.filter(path => !isInsideInstalledDependencyDirectory(path)));
+    }
+
+    private async _scanPaths(scanPlan: ScanPlan, target: ScanTarget): Promise<void> {
         this._isScanning = true;
         this._lastScanError = null;
         this._lastBatchProgress = null;
@@ -555,13 +707,21 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         const token = this._scanCancelTokenSource.token;
 
         this._postMessage({ type: 'scanStarted' });
-        logger.info('Starting scan', { target, files: scanQueue.length });
+        logger.info('Starting scan', {
+            target,
+            sourceFiles: scanPlan.sourcePaths.length,
+            dependencyFiles: scanPlan.dependencyPaths.length,
+        });
 
-        const totalFiles = scanQueue.length;
         let scannedCount = 0;
         const batchSize = 50;
         const startTime = Date.now();
         const selectedScanners = this._getSelectedScannerNames();
+        const sourceScanners = selectedScanners.filter(scanner => !DEPENDENCY_SCANNERS.has(scanner));
+        const dependencyScanners = selectedScanners.filter(scanner => DEPENDENCY_SCANNERS.has(scanner));
+        const sourcePaths = sourceScanners.length > 0 ? scanPlan.sourcePaths : [];
+        const dependencyPaths = dependencyScanners.length > 0 ? scanPlan.dependencyPaths : [];
+        const totalFiles = sourcePaths.length + dependencyPaths.length;
 
         this._issues = [];
 
@@ -572,16 +732,16 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         }
 
         if (this._debugMode) {
-            await this._runDebugScan(scanQueue, selectedScanners, token);
+            await this._runDebugScan([...sourcePaths, ...dependencyPaths], selectedScanners, token);
         } else {
-            for (let i = 0; i < totalFiles; i += batchSize) {
+            for (let i = 0; i < sourcePaths.length; i += batchSize) {
                 if (token.isCancellationRequested) break;
 
-                const batch = scanQueue.slice(i, i + batchSize);
+                const batch = sourcePaths.slice(i, i + batchSize);
                 const batchStartTime = Date.now();
 
                 const results = await this._securityService.scan(batch, {
-                    scanners: selectedScanners,
+                    scanners: sourceScanners,
                     onStatus: (update) => this.updateScanStatus(update),
                 });
 
@@ -601,6 +761,28 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                 this._lastBatchProgress = { current: scannedCount, total: totalFiles };
 
                 await new Promise(resolve => setTimeout(resolve, 5));
+            }
+
+            if (!token.isCancellationRequested && dependencyPaths.length > 0 && dependencyScanners.length > 0) {
+                const dependencyStartTime = Date.now();
+                const results = await this._securityService.scan(dependencyPaths, {
+                    scanners: dependencyScanners,
+                    onStatus: (update) => this.updateScanStatus(update),
+                });
+
+                const newIssues = results.issues.map(toIssueData);
+                this._issues.push(...newIssues);
+                scannedCount += dependencyPaths.length;
+                const dependencyDuration = Date.now() - dependencyStartTime;
+
+                logger.debug(`Dependency scan complete: ${dependencyPaths.length} manifest(s) in ${dependencyDuration}ms`);
+
+                this._postMessage({
+                    type: 'issuesUpdated',
+                    issues: newIssues,
+                    batchInfo: { current: scannedCount, total: totalFiles }
+                });
+                this._lastBatchProgress = { current: scannedCount, total: totalFiles };
             }
         }
 
@@ -917,7 +1099,8 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             }
 
             const rootPath = workspaceFolders[0]!.uri.fsPath;
-            const scanQueue = await this._resolveScanPaths('workspace');
+            const scanPlan = await this._resolveScanPlan('workspace');
+            const scanQueue = dedupePaths([...scanPlan.sourcePaths, ...scanPlan.dependencyPaths]);
             const fileSystem = providerRegistry.getFilesystem();
             if (!fileSystem) {
                 this._postMessage({
