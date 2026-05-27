@@ -166,7 +166,56 @@ const ALL_SPECIALISTS = [
     { name: 'General Security Expert', focus: 'OWASP Top 10 vulnerabilities, code smells, and API contract breaches' }
 ];
 
-const AgentLogDisplay: React.FC<{ logs: string[] }> = ({ logs }) => {
+type LogLineKind = 'thinking' | 'done' | 'assistant' | 'command' | 'output' | 'tool' | 'plain';
+
+function classifyLogLine(line: string): { kind: LogLineKind; prefix: string; body: string } {
+    // opencode: thinking  /  opencode: stop (N tokens)  /  opencode: complete
+    if (/^opencode:\s/i.test(line)) {
+        const body = line.replace(/^opencode:\s*/i, '');
+        const isDone = /^(stop|complete|end)/i.test(body);
+        return { kind: isDone ? 'done' : 'thinking', prefix: 'opencode', body };
+    }
+    // assistant: <model text>
+    if (/^assistant:\s/i.test(line)) {
+        return { kind: 'assistant', prefix: 'assistant', body: line.replace(/^assistant:\s*/i, '') };
+    }
+    // $ command
+    if (/^\$\s/.test(line)) {
+        return { kind: 'command', prefix: '$', body: line.slice(2) };
+    }
+    // indented output (2-space indent)
+    if (/^  \S/.test(line)) {
+        return { kind: 'output', prefix: '', body: line.trimStart() };
+    }
+    // tool: title (status)  — e.g. "bash: Run command (completed)"
+    if (/^[\w_-]+:\s/.test(line)) {
+        const colonIdx = line.indexOf(':');
+        return { kind: 'tool', prefix: line.slice(0, colonIdx), body: line.slice(colonIdx + 2) };
+    }
+    return { kind: 'plain', prefix: '', body: line };
+}
+
+const LOG_KIND_STYLES: Record<LogLineKind, React.CSSProperties> = {
+    thinking: { color: 'var(--bb-color-muted)', fontStyle: 'italic' },
+    done:     { color: 'var(--bb-color-success)' },
+    assistant:{ color: 'var(--bb-color-foreground)' },
+    command:  { color: 'var(--bb-color-warning)' },
+    output:   { color: 'var(--bb-color-subtle)', paddingLeft: '12px' },
+    tool:     { color: 'var(--bb-color-link)' },
+    plain:    { color: 'var(--bb-color-muted)' },
+};
+
+const LOG_KIND_PREFIX_STYLES: Record<LogLineKind, React.CSSProperties> = {
+    thinking: { color: 'var(--bb-color-muted)', marginRight: '5px' },
+    done:     { color: 'var(--bb-color-success)', marginRight: '5px' },
+    assistant:{ color: 'var(--bb-color-muted)', marginRight: '5px' },
+    command:  { color: 'var(--bb-color-warning)', marginRight: '5px' },
+    output:   {},
+    tool:     { color: 'var(--bb-color-link)', opacity: 0.7, marginRight: '4px' },
+    plain:    {},
+};
+
+const OpenCodeTerminal: React.FC<{ logs: string[] }> = ({ logs }) => {
     const containerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -176,31 +225,32 @@ const AgentLogDisplay: React.FC<{ logs: string[] }> = ({ logs }) => {
     }, [logs]);
 
     return (
-        <div>
-            <div className="bb-section-title" style={{ padding: '0 0 6px', fontSize: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                Activity log
-                <span style={{ fontSize: '9px', color: 'var(--bb-color-muted)', fontWeight: 400 }}>{logs.length} lines</span>
+        <div className="bb-terminal">
+            <div className="bb-terminal-header">
+                <span className="bb-terminal-dot bb-terminal-dot--red" />
+                <span className="bb-terminal-dot bb-terminal-dot--yellow" />
+                <span className="bb-terminal-dot bb-terminal-dot--green" />
+                <span className="bb-terminal-title">opencode</span>
+                <span className="bb-terminal-count">{logs.length}</span>
             </div>
-            <div
-                ref={containerRef}
-                style={{
-                    maxHeight: '200px',
-                    overflowY: 'auto',
-                    fontSize: '11px',
-                    lineHeight: '1.5',
-                    fontFamily: 'var(--bb-font-mono, "Cascadia Code", "Fira Code", monospace)',
-                    color: 'var(--bb-color-foreground)',
-                    background: 'var(--bb-color-panel-soft)',
-                    borderRadius: '6px',
-                    padding: '8px 10px',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-all',
-                    border: '0.5px solid var(--bb-color-border)',
-                }}
-            >
-                {logs.map((line, i) => (
-                    <div key={i}>{line}</div>
-                ))}
+            <div ref={containerRef} className="bb-terminal-body">
+                {logs.length === 0 ? (
+                    <span className="bb-terminal-empty">Waiting for agent output...</span>
+                ) : (
+                    logs.map((line, i) => {
+                        const { kind, prefix, body } = classifyLogLine(line);
+                        return (
+                            <div key={i} className="bb-terminal-line" style={LOG_KIND_STYLES[kind]}>
+                                {prefix && (
+                                    <span className="bb-terminal-prefix" style={LOG_KIND_PREFIX_STYLES[kind]}>
+                                        {kind === 'command' ? '$ ' : `${prefix}: `}
+                                    </span>
+                                )}
+                                <span className="bb-terminal-body-text">{body}</span>
+                            </div>
+                        );
+                    })
+                )}
             </div>
         </div>
     );
@@ -561,9 +611,9 @@ const App = () => {
                             </section>
                         )}
 
-                        {loading && agentLogs.length > 0 && (
-                            <section className="bb-section" style={{ marginTop: '12px' }}>
-                                <AgentLogDisplay logs={agentLogs} />
+                        {loading && (
+                            <section className="bb-terminal-section">
+                                <OpenCodeTerminal logs={agentLogs} />
                             </section>
                         )}
 
