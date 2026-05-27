@@ -15,6 +15,7 @@ import {
 } from '../webview/messages';
 import { getActiveProvider } from '../services/ai-adapter-factory';
 import { markFileAsNavigated } from '../utils/navigation-cooldown';
+import { getWorkspacePackageNames, filterWorkspaceHallucinatedDeps } from '../services/workspace-packages-resolver';
 
 const logger = createLogger('SeverityPanel');
 const execFileAsync = promisify(execFile);
@@ -670,7 +671,9 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                         scanners: projectLevelScanners,
                         onStatus: (update) => this.updateScanStatus(update),
                     });
-                    const newIssues = projectResults.issues.map(toIssueData);
+                    const workspacePkgs = await getWorkspacePackageNames(workspaceRoot);
+                    const filtered = filterWorkspaceHallucinatedDeps(projectResults.issues, workspacePkgs);
+                    const newIssues = filtered.map(toIssueData);
                     this._issues.push(...newIssues);
                     this._postMessage({ type: 'issuesUpdated', issues: newIssues });
                 }
@@ -689,7 +692,10 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                         onStatus: (update) => this.updateScanStatus(update),
                     });
 
-                    const newIssues = results.issues.map(toIssueData);
+                    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+                    const workspacePkgs = workspaceRoot ? await getWorkspacePackageNames(workspaceRoot) : new Set<string>();
+                    const filtered = filterWorkspaceHallucinatedDeps(results.issues, workspacePkgs);
+                    const newIssues = filtered.map(toIssueData);
                     this._issues.push(...newIssues);
 
                     scannedCount += batch.length;
@@ -810,7 +816,10 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                 scanners: this._getSelectedScannerNames(),
                 onStatus: (update) => this.updateScanStatus(update),
             });
-            const issueData = result.issues.map(toIssueData);
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            const workspacePkgs = workspaceRoot ? await getWorkspacePackageNames(workspaceRoot) : new Set<string>();
+            const filtered = filterWorkspaceHallucinatedDeps(result.issues, workspacePkgs);
+            const issueData = filtered.map(toIssueData);
             this._issues = issueData;
             this._postMessage({ type: 'scanComplete', issues: issueData });
         } catch (error) {

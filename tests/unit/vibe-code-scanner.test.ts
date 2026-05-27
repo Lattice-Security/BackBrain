@@ -73,21 +73,6 @@ describe("VibeCodeScanner", () => {
     expect(extensions).toContain(".py");
   });
 
-  // Phase 8.2 - New Detector Tests
-
-  it("should detect dead code after return statement", async () => {
-    const content = `
-function test() {
-  return 42;
-  console.log("This is dead code");
-}
-    `;
-    const issues = await scanner.scanFile("test.ts", content);
-    const deadCode = issues.find(i => i.ruleId === 'vibe-code.dead-code');
-    expect(deadCode).toBeDefined();
-    expect(deadCode?.description).toContain("Unreachable code");
-  });
-
   it("should detect type mismatch - parseInt on number", async () => {
     const content = `
 const myNumber = 42;
@@ -121,25 +106,6 @@ const parts = count.split(",");
     expect(result).toBeDefined();
     expect(result.scannerInfo).toBe("VibeCode Scanner");
     expect(result.scannedFiles).toEqual([]); // Files don't exist
-  });
-
-  it("should NOT detect dead code in switch statements", async () => {
-    const content = `
-function test(x) {
-  switch(x) {
-    case 1:
-      return "one";
-    case 2:
-      return "two";
-    default:
-      return "other";
-  }
-}
-    `;
-    const issues = await scanner.scanFile("test.ts", content);
-    const deadCode = issues.filter(i => i.ruleId === 'vibe-code.dead-code');
-    // Should NOT find dead code for case 2 or default
-    expect(deadCode.length).toBe(0);
   });
 
   it("should ignore patterns inside comments and strings", async () => {

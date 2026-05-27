@@ -55,7 +55,6 @@ export class VibeCodeScanner implements SecurityScanner {
 
     // Run built-in detectors
     issues.push(...this.detectUnhandledPromises(filePath, lines));
-    issues.push(...this.detectDeadCode(filePath, lines));
     issues.push(...this.detectTypeMismatches(filePath, lines));
     issues.push(...await this.detectHallucinatedDeps(filePath, content));
 
@@ -185,82 +184,6 @@ export class VibeCodeScanner implements SecurityScanner {
       });
 
       i = endIdx;
-    }
-
-    return issues;
-  }
-
-  /**
-   * Detect dead code after return, throw, break, continue statements
-   */
-  private detectDeadCode(filePath: string, lines: string[]): SecurityIssue[] {
-    const issues: SecurityIssue[] = [];
-
-    // Track brace depth per line
-    const depthAtLine: number[] = [];
-    let braceDepth = 0;
-    for (const line of lines) {
-      depthAtLine.push(braceDepth);
-      for (const char of line) {
-        if (char === '{') braceDepth++;
-        else if (char === '}') braceDepth--;
-      }
-    }
-
-    let afterTerminator = false;
-    let terminatorLine = 0;
-    let terminatorDepth = 0;
-    let terminatorText = '';
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]!;
-      const trimmed = line.trim();
-
-      // Reset afterTerminator if we hit a new case or default in a switch
-      if (trimmed.startsWith('case ') || trimmed.startsWith('default:')) {
-        afterTerminator = false;
-      }
-
-      // Check for terminator statements
-      if (/^\s*(return|throw|break|continue)\b/.test(trimmed) && !trimmed.includes('{')) {
-        afterTerminator = true;
-        terminatorLine = i + 1;
-        terminatorDepth = depthAtLine[i]!;
-        terminatorText = trimmed;
-        continue;
-      }
-
-      // If we're after a terminator, check for code (not braces, comments, or empty lines)
-      if (afterTerminator && trimmed && !trimmed.startsWith('//') && !trimmed.startsWith('/*') && trimmed !== '}' && trimmed !== '{') {
-        const flaggedDepth = depthAtLine[i]!;
-        const sameDepth = flaggedDepth === terminatorDepth;
-        const notTernary = !terminatorText.includes('?');
-        // Look ahead for catch/finally/else
-        let nextCode: string | null = null;
-        for (let k = i + 1; k < lines.length; k++) {
-          const n = lines[k]!.trim();
-          if (n && !n.startsWith('//') && !n.startsWith('/*')) {
-            nextCode = n;
-            break;
-          }
-        }
-        const notFollowedByHandler = nextCode === null ||
-          !/^(catch|finally|else|else\s+if)\b/.test(nextCode);
-
-        const confidence = sameDepth && notTernary && notFollowedByHandler ? 'high' : 'medium';
-
-        issues.push({
-          ruleId: 'vibe-code.dead-code',
-          title: 'Dead Code',
-          description: `Unreachable code after line ${terminatorLine}`,
-          severity: 'medium',
-          confidence,
-          filePath,
-          line: i + 1,
-          snippet: trimmed,
-        });
-        afterTerminator = false; // Report once per block
-      }
     }
 
     return issues;

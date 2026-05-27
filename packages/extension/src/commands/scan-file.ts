@@ -6,6 +6,7 @@ import { createLogger } from '@backbrain/core';
 const logger = createLogger('ScanFile');
 
 import { SeverityPanelProvider } from '../views/severity-panel-provider';
+import { getWorkspacePackageNames, filterWorkspaceHallucinatedDeps } from '../services/workspace-packages-resolver';
 
 interface CommandContext {
   fileSystem: FileSystem;
@@ -80,12 +81,18 @@ export async function scanFileCommand(ctx: CommandContext, uri?: vscode.Uri, opt
         onStatus: (update) => ctx.severityPanelProvider.updateScanStatus(update),
       });
 
-      // Merge the file scan result into the existing dashboard state
-      ctx.severityPanelProvider.updateFileIssues(filePath, result.issues);
+      // Filter out hallucinated-dep false positives for internal workspace packages
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const filteredIssues = workspaceRoot
+        ? filterWorkspaceHallucinatedDeps(result.issues, await getWorkspacePackageNames(workspaceRoot))
+        : result.issues;
 
-      const critical = result.issues.filter((i: CodeIssue) => i.severity === 'critical').length;
-      const high = result.issues.filter((i: CodeIssue) => i.severity === 'high').length;
-      const total = result.issues.length;
+      // Merge the file scan result into the existing dashboard state
+      ctx.severityPanelProvider.updateFileIssues(filePath, filteredIssues);
+
+      const critical = filteredIssues.filter((i: CodeIssue) => i.severity === 'critical').length;
+      const high = filteredIssues.filter((i: CodeIssue) => i.severity === 'high').length;
+      const total = filteredIssues.length;
 
       if (!options.quiet && total > 0) {
         vscode.window.showInformationMessage(
