@@ -1383,10 +1383,25 @@ export class CliAgentReviewScanner implements SecurityScanner {
         // and runtime state. Resolve them defensively before spawning any child
         // process so the binary can always find its auth files.
         const home = process.env.HOME || os.homedir();
+        
+        // Defensively build the PATH environment variable. Extension hosts on macOS
+        // may strip standard bin paths (like /usr/local/bin and /opt/homebrew/bin)
+        // when launched from a GUI/Launchpad.
+        const defaultPaths = ['/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+        if (os.platform() === 'darwin') {
+            defaultPaths.unshift('/opt/homebrew/bin');
+        }
+        const currentPath = process.env.PATH || '';
+        const pathSeparator = os.platform() === 'win32' ? ';' : ':';
+        const combinedPaths = Array.from(new Set([
+            ...currentPath.split(pathSeparator),
+            ...defaultPaths
+        ])).filter(Boolean).join(pathSeparator);
+
         const env: NodeJS.ProcessEnv = {
             ...process.env,
             HOME: home,
-            PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+            PATH: combinedPaths,
             // Gemini CLI resolves credentials via $XDG_CONFIG_HOME/gemini/
             // (falls back to $HOME/.config/gemini/ when the var is absent, but
             // only if HOME itself is correct — set both to be safe).
