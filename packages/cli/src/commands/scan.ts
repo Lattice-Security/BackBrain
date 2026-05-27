@@ -1,4 +1,4 @@
-import * as fs from 'fs/promises';
+import * as fs from 'fs';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -11,7 +11,6 @@ import {
     getLogger,
     LOG_LEVELS,
     type SecurityScanStatusUpdate,
-    type IssueSeverity,
     type ScanRecord,
 } from '@backbrain/core';
 import { createScanners } from '../scanner/cli-setup';
@@ -21,12 +20,12 @@ const execFileAsync = promisify(execFile);
 export interface ScanArgs {
     dir: string;
     json: boolean;
-    minSeverity?: string;
+    minSeverity?: string | undefined;
     changed: boolean;
     verbose: boolean;
     noAgent: boolean;
     noSave: boolean;
-    scanners?: string[];
+    scanners?: string[] | undefined;
 }
 
 const EXCLUDED_DIRECTORIES = new Set([
@@ -102,9 +101,9 @@ export async function scanCommand(args: ScanArgs): Promise<number> {
 
     const result = await securityService.scan(files, {
         scanners: args.scanners,
-        minSeverity: args.minSeverity as IssueSeverity | undefined,
+        minSeverity: args.minSeverity,
         onStatus,
-    });
+    } as any);
 
     logger.info('Scan completed', {
         issues: result.issues.length,
@@ -182,22 +181,29 @@ async function walkFiles(
     const extSet = new Set(extensions);
 
     async function walk(dir: string): Promise<void> {
-        let entries: fs.Dirent[];
+        let names: string[];
         try {
-            entries = await fs.readdir(dir, { withFileTypes: true });
+            names = await fs.promises.readdir(dir);
         } catch {
             return;
         }
 
-        for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
+        for (const name of names) {
+            const fullPath = path.join(dir, name);
 
-            if (entry.isDirectory()) {
-                if (!EXCLUDED_DIRECTORIES.has(entry.name)) {
+            let stat: fs.Stats;
+            try {
+                stat = await fs.promises.stat(fullPath);
+            } catch {
+                continue;
+            }
+
+            if (stat.isDirectory()) {
+                if (!EXCLUDED_DIRECTORIES.has(name)) {
                     await walk(fullPath);
                 }
-            } else if (entry.isFile()) {
-                if (extSet.has(path.extname(entry.name))) {
+            } else if (stat.isFile()) {
+                if (extSet.has(path.extname(name))) {
                     result.push(fullPath);
                 }
             }

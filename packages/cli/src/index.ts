@@ -69,18 +69,19 @@ export async function main(argv: string[]): Promise<void> {
 }
 
 function parseScanArgs(argv: string[]): ScanArgs {
+    const minSev = extractFlag(argv, '--min-severity');
+    const scn = extractFlag(argv, '--scanners');
     return {
         dir: extractFlag(argv, '--dir') || process.cwd(),
         json: argv.includes('--json'),
-        minSeverity: extractFlag(argv, '--min-severity') as ScanArgs['minSeverity'],
+        minSeverity: minSev ?? undefined,
         changed: argv.includes('--changed'),
         verbose: argv.includes('--verbose'),
         noAgent: argv.includes('--no-agent'),
         noSave: argv.includes('--no-save'),
-        scanners: extractFlag(argv, '--scanners')
-            ?.split(',')
-            .map((s) => s.trim())
-            .filter(Boolean),
+        scanners: scn
+            ? scn.split(',').map((s) => s.trim()).filter(Boolean)
+            : undefined,
     };
 }
 

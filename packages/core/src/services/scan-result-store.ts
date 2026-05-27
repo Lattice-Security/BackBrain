@@ -29,13 +29,17 @@ export interface ScanRecord {
 }
 
 export class ScanResultStore {
-    private scanDir: string;
+    readonly scanDir: string;
     private historyDir: string;
     private scanErrors: { scanner: string; message: string }[] = [];
 
     constructor(rootDir: string) {
         this.scanDir = path.join(rootDir, '.backbrain');
         this.historyDir = path.join(this.scanDir, 'scan-history');
+    }
+
+    get basePath(): string {
+        return this.scanDir;
     }
 
     addError(scanner: string, message: string): void {

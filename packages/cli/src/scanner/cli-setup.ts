@@ -10,7 +10,7 @@ import {
 
 export interface SetupOptions {
     noAgent?: boolean;
-    scannerNames?: string[];
+    scannerNames?: string[] | undefined;
 }
 
 export function createScanners(options: SetupOptions = {}): SecurityScanner[] {

@@ -1,4 +1,3 @@
-import * as path from 'path';
 import * as vscode from 'vscode';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
