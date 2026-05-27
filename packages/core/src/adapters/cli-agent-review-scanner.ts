@@ -1113,7 +1113,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
 
         if (backend === 'opencode') {
             env.XDG_CACHE_HOME = env.XDG_CACHE_HOME || path.join(home, '.cache');
-            env.XDG_DATA_HOME  = env.XDG_DATA_HOME  || path.join(home, '.local', 'share');
+            env.XDG_DATA_HOME = env.XDG_DATA_HOME || path.join(home, '.local', 'share');
         }
 
         return env;
