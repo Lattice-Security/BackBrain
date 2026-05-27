@@ -92,3 +92,10 @@ function extractFlag(argv: string[], flag: string): string | undefined {
     }
     return undefined;
 }
+
+if (import.meta?.main ?? true) {
+    main(process.argv.slice(2)).catch((err) => {
+        console.error('Fatal error:', err);
+        process.exit(1);
+    });
+}
