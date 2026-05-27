@@ -17,6 +17,7 @@ import type {
     ScanTarget,
 } from './messages';
 import { IssueItem } from './components/IssueItem';
+import { Visualizer } from './components/Visualizer';
 import { ErrorBoundary, ErrorCard } from './components/ErrorBoundary';
 import './styles/theme.css';
 
@@ -47,9 +48,10 @@ type IconName =
     | 'spark'
     | 'users'
     | 'x'
-    | 'zap';
+    | 'zap'
+    | 'graph';
 
-type TabId = 'scan' | 'issues' | 'agents';
+type TabId = 'scan' | 'issues' | 'agents' | 'visualizer';
 type SortMethod = 'severity' | 'filename';
 type FilterMethod = 'all' | 'ai' | 'deterministic';
 
@@ -72,6 +74,7 @@ const ICON_PATHS: Record<IconName, string[]> = {
     users: ['M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2', 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', 'M22 21v-2a4 4 0 0 0-3-3.9', 'M16 3.1a4 4 0 0 1 0 7.8'],
     x: ['M18 6 6 18', 'M6 6l12 12'],
     zap: ['M13 2 3 14h8l-1 8 11-13h-8Z'],
+    graph: ['M12 3v3', 'M19 9h-3.5', 'M5 9h3.5', 'M12 18v3', 'M12 6a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z', 'M19 12a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z', 'M5 12a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z'],
 };
 
 function Icon({ name, className }: { name: IconName; className?: string }) {
@@ -157,6 +160,93 @@ function basename(filePath: string): string {
     return filePath.split(/[\\/]/).pop() || filePath;
 }
 
+type LogLineKind = 'thinking' | 'done' | 'assistant' | 'command' | 'output' | 'tool' | 'plain';
+
+function classifyLogLine(line: string): { kind: LogLineKind; prefix: string; body: string } {
+    if (/^(opencode|codex|gemini):\s/i.test(line)) {
+        const colonIdx = line.indexOf(':');
+        const prefix = line.slice(0, colonIdx);
+        const body = line.slice(colonIdx + 2);
+        const isDone = /^(stop|complete|end|aggregat|verif)/i.test(body);
+        return { kind: isDone ? 'done' : 'thinking', prefix, body };
+    }
+    if (/^assistant:\s/i.test(line)) {
+        return { kind: 'assistant', prefix: 'assistant', body: line.replace(/^assistant:\s*/i, '') };
+    }
+    if (/^\$\s/.test(line)) {
+        return { kind: 'command', prefix: '$', body: line.slice(2) };
+    }
+    if (/^  \S/.test(line)) {
+        return { kind: 'output', prefix: '', body: line.trimStart() };
+    }
+    if (/^[\w_-]+:\s/.test(line)) {
+        const colonIdx = line.indexOf(':');
+        return { kind: 'tool', prefix: line.slice(0, colonIdx), body: line.slice(colonIdx + 2) };
+    }
+    return { kind: 'plain', prefix: '', body: line };
+}
+
+const LOG_KIND_STYLES: Record<LogLineKind, React.CSSProperties> = {
+    thinking: { color: 'var(--bb-color-muted)', fontStyle: 'italic' },
+    done:     { color: 'var(--bb-color-success)' },
+    assistant:{ color: 'var(--bb-color-foreground)' },
+    command:  { color: 'var(--bb-color-warning)' },
+    output:   { color: 'var(--bb-color-subtle)', paddingLeft: '12px' },
+    tool:     { color: 'var(--bb-color-link)' },
+    plain:    { color: 'var(--bb-color-muted)' },
+};
+
+const LOG_KIND_PREFIX_STYLES: Record<LogLineKind, React.CSSProperties> = {
+    thinking: { color: 'var(--bb-color-muted)', marginRight: '5px' },
+    done:     { color: 'var(--bb-color-success)', marginRight: '5px' },
+    assistant:{ color: 'var(--bb-color-muted)', marginRight: '5px' },
+    command:  { color: 'var(--bb-color-warning)', marginRight: '5px' },
+    output:   {},
+    tool:     { color: 'var(--bb-color-link)', opacity: 0.7, marginRight: '4px' },
+    plain:    {},
+};
+
+const OpenCodeTerminal: React.FC<{ logs: string[]; backend?: string }> = ({ logs, backend = 'opencode' }) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (containerRef.current) {
+            containerRef.current.scrollTop = containerRef.current.scrollHeight;
+        }
+    }, [logs]);
+
+    return (
+        <div className="bb-terminal">
+            <div className="bb-terminal-header">
+                <span className="bb-terminal-dot bb-terminal-dot--red" />
+                <span className="bb-terminal-dot bb-terminal-dot--yellow" />
+                <span className="bb-terminal-dot bb-terminal-dot--green" />
+                <span className="bb-terminal-title">{backend}</span>
+                <span className="bb-terminal-count">{logs.length}</span>
+            </div>
+            <div ref={containerRef} className="bb-terminal-body">
+                {logs.length === 0 ? (
+                    <span className="bb-terminal-empty">Waiting for agent output...</span>
+                ) : (
+                    logs.map((line, i) => {
+                        const { kind, prefix, body } = classifyLogLine(line);
+                        return (
+                            <div key={i} className="bb-terminal-line" style={LOG_KIND_STYLES[kind]}>
+                                {prefix && (
+                                    <span className="bb-terminal-prefix" style={LOG_KIND_PREFIX_STYLES[kind]}>
+                                        {kind === 'command' ? '$ ' : `${prefix}: `}
+                                    </span>
+                                )}
+                                <span className="bb-terminal-body-text">{body}</span>
+                            </div>
+                        );
+                    })
+                )}
+            </div>
+        </div>
+    );
+};
+
 const App = () => {
     const initialState = vscode.getState() as {
         issues?: IssueData[];
@@ -190,6 +280,7 @@ const App = () => {
     const [debugSteps, setDebugSteps] = useState<DebugStep[]>([]);
     const [debugPhase, setDebugPhase] = useState('');
     const [lastScanSpecialists, setLastScanSpecialists] = useState<Array<{ name: string; focus: string }>>([]);
+    const [agentLogs, setAgentLogs] = useState<string[]>([]);
 
     useEffect(() => {
         vscode.setState({
@@ -212,12 +303,14 @@ const App = () => {
                     setScanStatus(null);
                     setBatchProgress(null);
                     setDebugSteps([]);
+                    setAgentLogs([]);
                     break;
                 case 'scanComplete':
                     setIssues(message.issues);
                     setLoading(false);
                     setBatchProgress(null);
                     setScanStatus(null);
+                    setAgentLogs([]);
                     setActiveTab('issues');
                     break;
                 case 'issuesUpdated':
@@ -236,6 +329,26 @@ const App = () => {
                     break;
                 case 'scanStatus':
                     setScanStatus(message);
+                    if (message.agentLog) {
+                        setAgentLogs(prev => [...prev.slice(-199), message.agentLog!]);
+                    } else {
+                        setAgentLogs(prev => {
+                            const b = message.backend || 'opencode';
+                            const phaseLines: Record<string, string> = {
+                                'deterministic':    `${b}: running deterministic scanners`,
+                                'agent-planner':    `${b}: planner running`,
+                                'agent-specialists':`${b}: specialist agents reviewing code`,
+                                'agent-aggregator': `${b}: aggregating findings`,
+                                'agent-verification':`${b}: verifying findings`,
+                                'degraded':         `${b}: completed with warnings`,
+                                'complete':         `${b}: complete`,
+                            };
+                            const synthetic = phaseLines[message.phase];
+                            if (!synthetic) return prev;
+                            if (prev[prev.length - 1] === synthetic) return prev;
+                            return [...prev.slice(-199), synthetic];
+                        });
+                    }
                     if (message.phase === 'agent-specialists' && message.agents && message.agents.length > 0) {
                         setLastScanSpecialists(message.agents.map(name => ({ name, focus: '' })));
                     }
@@ -409,14 +522,14 @@ const App = () => {
                 </header>
 
                 <nav className="bb-tab-row">
-                    {(['scan', 'issues', 'agents'] as TabId[]).map(tab => (
+                    {(['scan', 'issues', 'agents', 'visualizer'] as TabId[]).map(tab => (
                         <button
                             key={tab}
                             className={`bb-tab${activeTab === tab ? ' bb-tab--active' : ''}`}
                             onClick={() => setActiveTab(tab)}
                         >
-                            <Icon name={tab === 'scan' ? 'play' : tab === 'issues' ? 'shield' : 'users'} />
-                            <span>{tab === 'scan' ? 'Scan' : tab === 'issues' ? 'Issues' : 'Agents'}</span>
+                            <Icon name={tab === 'scan' ? 'play' : tab === 'issues' ? 'shield' : tab === 'agents' ? 'users' : 'graph'} />
+                            <span>{tab === 'scan' ? 'Scan' : tab === 'issues' ? 'Issues' : tab === 'agents' ? 'Agents' : 'Visualizer'}</span>
                         </button>
                     ))}
                 </nav>
@@ -532,6 +645,12 @@ const App = () => {
                                         </div>
                                     </div>
                                 )}
+                            </section>
+                        )}
+
+                        {loading && configuration.agentReviewEnabled && (
+                            <section className="bb-terminal-section">
+                                <OpenCodeTerminal logs={agentLogs} backend={scanStatus?.backend || 'opencode'} />
                             </section>
                         )}
 
@@ -960,6 +1079,12 @@ const App = () => {
                                 </div>
                             )}
                         </section>
+                    </main>
+                )}
+
+                {activeTab === 'visualizer' && (
+                    <main className="bb-view">
+                        <Visualizer issues={issues} />
                     </main>
                 )}
             </div>
