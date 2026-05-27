@@ -1,7 +1,8 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { createLogger, type SecurityScanStatusUpdate, type SecurityService } from '@backbrain/core';
+import { createLogger, ScanResultStore, type SecurityScanStatusUpdate, type SecurityService } from '@backbrain/core';
 import {
     type AgentBackendId,
     type AgentScanDepth,
@@ -718,6 +719,8 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         const totalDuration = Date.now() - startTime;
         logger.info('Scan complete', { target, issues: this._issues.length, durationMs: totalDuration });
 
+        await this._persistScanResult(totalDuration);
+
         if (this._debugMode) {
             this.setStatus('info', 'Debug scan complete — toggle debug mode off to return to normal view');
             this._postMessage({
@@ -729,6 +732,35 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             this.setStatus('info', `Scan complete: ${this._issues.length} issue(s) found in ${Math.round(totalDuration / 100) / 10}s.`);
             this._postMessage({ type: 'scanComplete', issues: this._issues });
         }
+    }
+
+    private async _persistScanResult(totalDuration: number): Promise<void> {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) return;
+
+        const root = workspaceFolders[0]!.uri.fsPath;
+        const store = new ScanResultStore(root);
+
+        const codeIssues = this._issues.map((issue) => ({
+            id: issue.id || 'unknown',
+            title: issue.title || 'Untitled Issue',
+            description: issue.description || '',
+            severity: issue.severity,
+            type: 'security_vulnerability' as const,
+            category: issue.category || 'logic',
+            location: {
+                filePath: issue.filePath,
+                line: issue.line,
+                column: issue.column,
+            },
+        }));
+
+        await store.save({
+            issues: codeIssues as any,
+            scannedFiles: [],
+            scanDurationMs: totalDuration,
+            scannersUsed: this._getSelectedScannerNames(),
+        });
     }
 
     private async _runDebugScan(

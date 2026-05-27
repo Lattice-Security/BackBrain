@@ -1,5 +1,6 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
-import { getLogger, type LogEntry } from '@backbrain/core';
+import { getLogger, FileLogOutput, addLoggerOutput, type LogEntry } from '@backbrain/core';
 
 let outputChannel: vscode.OutputChannel | undefined;
 
@@ -26,6 +27,14 @@ export function initVSCodeLogging(context: vscode.ExtensionContext) {
 
             outputChannel?.appendLine(`[${timestamp}] [${level}] ${entry.message}${contextStr}`);
         });
+    }
+
+    // Add file logging to .backbrain/scan-log.jsonl
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (workspaceRoot) {
+        const logFile = new FileLogOutput(path.join(workspaceRoot, '.backbrain', 'scan-log.jsonl'));
+        context.subscriptions.push({ dispose: () => logFile.close() });
+        addLoggerOutput(logFile.handler);
     }
 }
 
