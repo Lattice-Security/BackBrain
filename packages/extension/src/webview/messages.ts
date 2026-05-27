@@ -1,4 +1,4 @@
-import type { CodeIssue, IssueSeverity, SecurityScanPhase } from '@backbrain/core';
+import type { CodeIssue, IssueSeverity, SecurityScanPhase, FileGraph, WorkflowGraph } from '@backbrain/core';
 
 /**
  * Acquire the VS Code API for webview → extension communication.
@@ -55,7 +55,8 @@ export type WebviewMessage =
     | { type: 'batchFix' }
     | { type: 'requestFixHistory' }
     | { type: 'exportReport' }
-    | { type: 'setDebugMode'; enabled: boolean };
+    | { type: 'setDebugMode'; enabled: boolean }
+    | { type: 'requestGraphData'; paths?: string[] };
 
 // ============================================================================
 // Extension → Webview Messages
@@ -81,7 +82,8 @@ export type ExtensionMessage =
     | { type: 'fixHistory'; sessions: FixSessionData[] }
     | { type: 'fixError'; error: string }
     | { type: 'fixSuggested'; issueId: string; fix: FixData }
-    | { type: 'debugStatus'; steps: DebugStep[]; paused: boolean; phase: string };
+    | { type: 'debugStatus'; steps: DebugStep[]; paused: boolean; phase: string }
+    | { type: 'graphData'; fileGraph: FileGraph; workflowGraph: WorkflowGraph; status: 'ready' | 'loading' | 'error' };
 
 // ============================================================================
 // Configuration Data

@@ -12,6 +12,10 @@ export * from './gitleaks-scanner';
 export * from './trivy-scanner';
 export * from './osv-scanner';
 export * from './cli-agent-review-scanner';
+export {
+    InProcessAgentReviewScanner,
+    type InProcessAgentReviewScannerOptions,
+} from './in-process-agent-review-scanner';
 export * from './vercel-ai-adapter';
 
 export const DEFAULT_SCANNERS = [

@@ -99,7 +99,7 @@ export class VercelAIAdapter implements AIProvider {
      * Note: All Vercel AI SDK provider factories are callable functions
      * that return a LanguageModel when invoked with a model name.
      */
-    private getModel() {
+    public getModel() {
         if (!this.providerFactory) {
             throw new Error(`Provider ${this.config.provider} is not initialized. Check API key.`);
         }
