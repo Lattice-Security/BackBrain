@@ -156,6 +156,8 @@ export interface SecurityScanStatusUpdate {
     degraded?: boolean;
     /** Dynamic agent names determined by the planner, one per specialist */
     agents?: string[];
+    /** Real-time log line from the agent CLI (e.g. opencode progress messages) */
+    agentLog?: string;
 }
 
 export interface SecurityScanner {

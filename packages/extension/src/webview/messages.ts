@@ -1,4 +1,5 @@
 import type { CodeIssue, IssueSeverity, SecurityScanPhase, FileGraph, WorkflowGraph } from '@backbrain/core';
+export type { FileGraph, FileNode, FileEdge, WorkflowGraph, WorkflowStep, WorkflowConnection } from '@backbrain/core';
 
 /**
  * Acquire the VS Code API for webview → extension communication.
@@ -67,7 +68,7 @@ export type ExtensionMessage =
     | { type: 'scanComplete'; issues: IssueData[] }
     | { type: 'scanError'; error: string }
     | { type: 'statusUpdate'; level: 'info' | 'warn' | 'error'; message: string }
-    | { type: 'scanStatus'; phase: SecurityScanPhase; level: 'info' | 'warn' | 'error'; message: string; backend?: string; scanner?: string; degraded?: boolean; agents?: string[] }
+    | { type: 'scanStatus'; phase: SecurityScanPhase; level: 'info' | 'warn' | 'error'; message: string; backend?: string; scanner?: string; degraded?: boolean; agents?: string[]; agentLog?: string }
     | { type: 'statusClear' }
     | { type: 'configurationState'; state: ConfigurationState }
     | { type: 'issuesUpdated'; issues: IssueData[]; batchInfo?: { current: number; total: number } }

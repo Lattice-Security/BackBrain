@@ -10,7 +10,6 @@ import type {
     AgentScanDepth,
     ConfigurationState,
     DebugStep,
-    DebugStepStatus,
     ExtensionMessage,
     FixData,
     IssueData,
@@ -109,6 +108,8 @@ const severityRank: Record<string, number> = {
     info: 4,
 };
 
+const basename = (filePath: string): string => filePath.split(/[\\/]/).pop() || filePath;
+
 const phaseLabels: Record<string, string> = {
     deterministic: 'Running deterministic scanners...',
     'agent-planner': 'AI planner creating specialists...',
@@ -165,6 +166,46 @@ const ALL_SPECIALISTS = [
     { name: 'General Security Expert', focus: 'OWASP Top 10 vulnerabilities, code smells, and API contract breaches' }
 ];
 
+const AgentLogDisplay: React.FC<{ logs: string[] }> = ({ logs }) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (containerRef.current) {
+            containerRef.current.scrollTop = containerRef.current.scrollHeight;
+        }
+    }, [logs]);
+
+    return (
+        <div>
+            <div className="bb-section-title" style={{ padding: '0 0 6px', fontSize: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                Activity log
+                <span style={{ fontSize: '9px', color: 'var(--bb-color-muted)', fontWeight: 400 }}>{logs.length} lines</span>
+            </div>
+            <div
+                ref={containerRef}
+                style={{
+                    maxHeight: '200px',
+                    overflowY: 'auto',
+                    fontSize: '11px',
+                    lineHeight: '1.5',
+                    fontFamily: 'var(--bb-font-mono, "Cascadia Code", "Fira Code", monospace)',
+                    color: 'var(--bb-color-foreground)',
+                    background: 'var(--bb-color-panel-soft)',
+                    borderRadius: '6px',
+                    padding: '8px 10px',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    border: '0.5px solid var(--bb-color-border)',
+                }}
+            >
+                {logs.map((line, i) => (
+                    <div key={i}>{line}</div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
 const App = () => {
     const initialState = vscode.getState() as { issues?: IssueData[]; scanDepthTier?: string } | undefined;
     const [issues, setIssues] = useState<IssueData[]>(initialState?.issues || []);
@@ -188,6 +229,7 @@ const App = () => {
     const [debugMode, setDebugMode] = useState(false);
     const [debugSteps, setDebugSteps] = useState<DebugStep[]>([]);
     const [debugPhase, setDebugPhase] = useState('');
+    const [agentLogs, setAgentLogs] = useState<string[]>([]);
 
     useEffect(() => {
         vscode.setState({ issues, scanDepthTier });
@@ -204,12 +246,14 @@ const App = () => {
                     setScanStatus(null);
                     setBatchProgress(null);
                     setDebugSteps([]);
+                    setAgentLogs([]);
                     break;
                 case 'scanComplete':
                     setIssues(message.issues);
                     setLoading(false);
                     setBatchProgress(null);
                     setScanStatus(null);
+                    setAgentLogs([]);
                     setActiveTab('issues');
                     break;
                 case 'issuesUpdated':
@@ -228,6 +272,9 @@ const App = () => {
                     break;
                 case 'scanStatus':
                     setScanStatus(message);
+                    if (message.agentLog) {
+                        setAgentLogs(prev => [...prev.slice(-49), message.agentLog!]);
+                    }
                     break;
                 case 'configurationState':
                     setConfiguration(message.state);
@@ -511,6 +558,12 @@ const App = () => {
                                         </div>
                                     </div>
                                 )}
+                            </section>
+                        )}
+
+                        {loading && agentLogs.length > 0 && (
+                            <section className="bb-section" style={{ marginTop: '12px' }}>
+                                <AgentLogDisplay logs={agentLogs} />
                             </section>
                         )}
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import type { IssueData, FixData } from '../messages';
 import { IssueItem } from './IssueItem';
 import './IssueList.css';
@@ -16,6 +16,7 @@ interface IssueListProps {
     scanStatus?: { phase: string; message: string; backend?: string; scanner?: string; level: string } | null;
     batchProgress?: { current: number; total: number } | null;
     scanDepthLabel?: string;
+    agentLogs?: string[];
 }
 
 type SortMethod = 'severity' | 'filename';
@@ -72,7 +73,8 @@ const SEVERITY_COLORS: Record<string, string> = {
 const ScanProgressSection: React.FC<{
     scanStatus: { phase: string; message: string; backend?: string; scanner?: string } | null;
     batchProgress: { current: number; total: number } | null;
-}> = ({ scanStatus, batchProgress }) => {
+    agentLogs?: string[];
+}> = ({ scanStatus, batchProgress, agentLogs }) => {
     if (!scanStatus && !batchProgress) {
         // Graceful fallback — no scanStatus messages arrived yet
         return (
@@ -152,6 +154,49 @@ const ScanProgressSection: React.FC<{
             <div className="scan-progress__pending-msg">
                 Findings will appear here as scanners complete...
             </div>
+            {agentLogs && agentLogs.length > 0 && (
+                <AgentLogDisplay logs={agentLogs} />
+            )}
+        </div>
+    );
+};
+
+const AgentLogDisplay: React.FC<{ logs: string[] }> = ({ logs }) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (containerRef.current) {
+            containerRef.current.scrollTop = containerRef.current.scrollHeight;
+        }
+    }, [logs]);
+
+    return (
+        <div className="scan-progress__agent-log" style={{ marginTop: '8px' }}>
+            <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--vscode-descriptionForeground, #888)', marginBottom: '4px' }}>
+                Activity log — {logs.length} lines
+            </div>
+            <div
+                ref={containerRef}
+                className="scan-progress__agent-log-content"
+                style={{
+                    maxHeight: '160px',
+                    overflowY: 'auto',
+                    fontSize: '11px',
+                    lineHeight: '1.5',
+                    fontFamily: 'var(--bb-font-mono, "Cascadia Code", "Fira Code", monospace)',
+                    color: 'var(--vscode-editor-foreground, #ccc)',
+                    background: 'var(--vscode-textCodeBlock-background, rgba(128,128,128,0.08))',
+                    borderRadius: '6px',
+                    padding: '6px 8px',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    border: '0.5px solid var(--vscode-widget-border, rgba(128,128,128,0.2))',
+                }}
+            >
+                {logs.map((line, i) => (
+                    <div key={i}>{line}</div>
+                ))}
+            </div>
         </div>
     );
 };
@@ -209,7 +254,7 @@ const SummaryBar: React.FC<{ counts: Record<string, number> }> = ({ counts }) =>
 // ============================================================
 
 export const IssueList: React.FC<IssueListProps> = ({
-    issues, loading, activeFix, explanations, onClearActiveFix, scanStatus, batchProgress,
+    issues, loading, activeFix, explanations, onClearActiveFix, scanStatus, batchProgress, agentLogs,
 }) => {
     const [sortMethod, setSortMethod] = useState<SortMethod>('severity');
     const [filterMethod, setFilterMethod] = useState<FilterMethod>('all');
@@ -271,6 +316,7 @@ export const IssueList: React.FC<IssueListProps> = ({
                 <ScanProgressSection
                     scanStatus={scanStatus ?? null}
                     batchProgress={batchProgress ?? null}
+                    agentLogs={agentLogs ?? []}
                 />
                 {/* Show any issues that have already streamed in */}
                 {issues.length > 0 && (

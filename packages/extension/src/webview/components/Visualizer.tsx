@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, MouseEvent } from 'react';
 import { vscode } from '../messages';
-import type { FileGraph, FileNode, WorkflowGraph, WorkflowStep, IssueData } from '../messages';
+import type { FileEdge, FileNode, WorkflowConnection, WorkflowStep, IssueData } from '../messages';
 import './Visualizer.css';
 
 interface VisualizerProps {
@@ -16,9 +16,9 @@ export function Visualizer({ issues }: VisualizerProps) {
     
     // Local cache for nodes state so they can be dragged
     const [fileNodes, setFileNodes] = useState<FileNode[]>([]);
-    const [fileEdges, setFileEdges] = useState<any[]>([]);
+    const [fileEdges, setFileEdges] = useState<FileEdge[]>([]);
     const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
-    const [workflowConnections, setWorkflowConnections] = useState<any[]>([]);
+    const [workflowConnections, setWorkflowConnections] = useState<WorkflowConnection[]>([]);
     
     const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -114,7 +114,7 @@ export function Visualizer({ issues }: VisualizerProps) {
     const handleOpenFile = (filePath: string) => {
         // Find line from issue, or fallback to 1
         const fileIssues = issues.filter(i => i.filePath === filePath);
-        const line = fileIssues.length > 0 ? fileIssues[0].line : 1;
+        const line = fileIssues[0]?.line ?? 1;
         vscode.postMessage({
             type: 'navigateToIssue',
             filePath,
@@ -237,7 +237,6 @@ export function Visualizer({ issues }: VisualizerProps) {
 
         // Curved link path calculation
         const dx = Math.abs(tX - sX) * 0.5;
-        const dy = Math.abs(tY - sY) * 0.5;
         const controlX1 = sX + (tX > sX ? dx : -dx);
         const controlY1 = sY;
         const controlX2 = tX - (tX > sX ? dx : -dx);
@@ -324,8 +323,9 @@ export function Visualizer({ issues }: VisualizerProps) {
                                         key={edge.id}
                                         d={getEdgePath(edge.source, edge.target)}
                                         className="bb-vis-edge-line"
-                                        title={edge.label}
-                                    />
+                                    >
+                                        {edge.label && <title>{edge.label}</title>}
+                                    </path>
                                 ))
                             ) : (
                                 workflowConnections.map((conn) => {
@@ -335,8 +335,9 @@ export function Visualizer({ issues }: VisualizerProps) {
                                             key={conn.id}
                                             d={getEdgePath(conn.source, conn.target)}
                                             className={`bb-vis-edge-line bb-vis-edge-line--logical${isGap ? ' bb-vis-edge-line--gap' : ''}`}
-                                            title={conn.label || conn.condition}
-                                        />
+                                        >
+                                            {(conn.label || conn.condition) && <title>{conn.label || conn.condition}</title>}
+                                        </path>
                                     );
                                 })
                             )}

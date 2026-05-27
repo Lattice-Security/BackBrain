@@ -1,4 +1,4 @@
-import { exec, execFile } from 'child_process';
+import { exec, execFile, spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import * as path from 'path';
@@ -35,6 +35,8 @@ interface ExecLikeError {
 interface BackendExecutionOptions {
     isReadinessProbe?: boolean;
     expectsJsonObject?: boolean;
+    /** Callback for each progress line emitted during execution (streaming) */
+    onStderrLine?: (line: string) => void;
 }
 
 interface BackendReadinessState {
@@ -319,7 +321,17 @@ export class CliAgentReviewScanner implements SecurityScanner {
         });
         let planner: PlannerOutput;
         try {
-            const plannerRaw = await this.runBackend(leadBackend, plannerPrompt, repositoryRoot);
+            const plannerRaw = await this.runBackend(leadBackend, plannerPrompt, repositoryRoot, {
+                onStderrLine: (line) => {
+                    this.reportStatus(context, {
+                        phase: 'agent-planner',
+                        level: 'info',
+                        message: `AI review planner running with ${leadBackend.id}.`,
+                        backend: leadBackend.id,
+                        agentLog: line,
+                    });
+                },
+            });
             planner = plannerSchema.parse(this.extractJson(plannerRaw));
         } catch (error) {
             logger.warn('Agent review planner failed; skipping AI review', { error: toError(error) });
@@ -376,6 +388,15 @@ export class CliAgentReviewScanner implements SecurityScanner {
                     deterministicIssues,
                     changedFiles,
                     repoSummary: planner.repoSummary,
+                },
+                (line) => {
+                    this.reportStatus(context, {
+                        phase: 'agent-specialists',
+                        level: 'info',
+                        message: `Running ${specialists.length} AI specialist review(s).`,
+                        backend: leadBackend.id,
+                        agentLog: line,
+                    });
                 }
             )
         );
@@ -421,7 +442,17 @@ export class CliAgentReviewScanner implements SecurityScanner {
             rawFindingCount: rawAgentFindings.length,
         });
         try {
-            const aggregatorRaw = await this.runBackend(leadBackend, aggregatorPrompt, repositoryRoot);
+            const aggregatorRaw = await this.runBackend(leadBackend, aggregatorPrompt, repositoryRoot, {
+                onStderrLine: (line) => {
+                    this.reportStatus(context, {
+                        phase: 'agent-aggregator',
+                        level: 'info',
+                        message: 'Merging AI specialist findings.',
+                        backend: leadBackend.id,
+                        agentLog: line,
+                    });
+                },
+            });
 
             // Attempt 1: standard extraction + Zod validation.
             let aggregated: AggregatorOutput | undefined;
@@ -554,7 +585,8 @@ export class CliAgentReviewScanner implements SecurityScanner {
             deterministicIssues: SecurityIssue[];
             changedFiles: string[];
             repoSummary: string;
-        }
+        },
+        onStderrLine?: (line: string) => void,
     ): Promise<{ roleName: string; backend: string; findings: SpecialistOutput['findings'] }> {
         logger.info('Running agent review specialist', {
             roleName: specialist.name,
@@ -568,7 +600,11 @@ export class CliAgentReviewScanner implements SecurityScanner {
             deterministicIssues: context.deterministicIssues,
             changedFiles: context.changedFiles,
         });
-        const raw = await this.runBackend(backend, prompt, context.repositoryRoot);
+        const raw = await this.runBackend(backend, prompt, context.repositoryRoot,
+            onStderrLine
+                ? { onStderrLine: (line) => onStderrLine(`[${specialist.name}] ${line}`) }
+                : {}
+        );
         const parsed = specialistSchema.parse(this.extractJson(raw));
         logger.info('Agent review specialist completed', {
             roleName: specialist.name,
@@ -590,10 +626,11 @@ export class CliAgentReviewScanner implements SecurityScanner {
             deterministicIssues: SecurityIssue[];
             changedFiles: string[];
             repoSummary: string;
-        }
+        },
+        onStderrLine?: (line: string) => void,
     ): Promise<{ roleName: string; backend: string; findings: SpecialistOutput['findings'] } | null> {
         try {
-            return await this.runSpecialist(specialist, backend, context);
+            return await this.runSpecialist(specialist, backend, context, onStderrLine);
         } catch (error) {
             logger.warn('Agent review specialist failed', {
                 roleName: specialist.name,
@@ -862,12 +899,24 @@ export class CliAgentReviewScanner implements SecurityScanner {
         options: BackendExecutionOptions = {},
     ): Promise<string> {
         const { binary, args } = this.buildBackendArgs(backend, prompt);
+        const env = this.buildExecEnv(backend.id);
+
+        // opencode exposes useful CLI activity as NDJSON events on stdout.
+        // Use spawn only in production so tests that inject execFn keep their
+        // deterministic command mocking.
+        if (backend.id === 'opencode' && options.onStderrLine && !this.execFn) {
+            return this.runBackendStreaming(binary, args, Object.assign(
+                { cwd, env, onStderrLine: options.onStderrLine },
+                options.isReadinessProbe ? { timeout: 60000 } : {},
+                { normalize: (stdout: string) => this.normalizeBackendOutput(backend.id, stdout, options) },
+            ));
+        }
 
         try {
             const { stdout } = await this.execFileAsync(binary, args, {
                 cwd,
                 maxBuffer: 20 * 1024 * 1024,
-                env: this.buildExecEnv(backend.id),
+                env,
                 timeout: options.isReadinessProbe ? 60000 : undefined,
             });
             return this.normalizeBackendOutput(backend.id, stdout, options);
@@ -881,6 +930,157 @@ export class CliAgentReviewScanner implements SecurityScanner {
             });
             throw error;
         }
+    }
+
+    /**
+     * Run a backend process with streaming output capture.
+     * Uses spawn instead of execFile so output can be forwarded in real-time.
+     * For opencode with --format json, stdout contains NDJSON events (one JSON
+     * per line) with types like:
+     *   - step_start:  a processing step began
+     *   - text:        text output from the model (part.text)
+     *   - tool_use:    tool invocation result (part.tool, part.state.title)
+     * These are converted to concise agent progress lines. The model response
+     * text is accumulated from text events and returned as the final result.
+     */
+    private runBackendStreaming(
+        binary: string,
+        args: string[],
+        opts: {
+            cwd: string;
+            env: NodeJS.ProcessEnv;
+            timeout?: number;
+            onStderrLine: (line: string) => void;
+            normalize: (stdout: string) => string;
+        },
+    ): Promise<string> {
+        return new Promise((resolve, reject) => {
+            let stdoutBuffer = '';
+            const stderrChunks: string[] = [];
+            let timedOut = false;
+            let responseText = '';
+            let pendingLine = '';
+            let emittedResponseNotice = false;
+            const emittedProgress = new Set<string>();
+
+            const emitProgress = (line: string) => {
+                const clean = line
+                    .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                if (!clean || emittedProgress.has(clean)) {
+                    return;
+                }
+                emittedProgress.add(clean);
+                opts.onStderrLine(clean.length > 240 ? `${clean.slice(0, 237)}...` : clean);
+            };
+
+            const handleStdoutLine = (line: string) => {
+                const trimmed = line.trim();
+                if (!trimmed) return;
+
+                try {
+                    const event = JSON.parse(trimmed) as Record<string, any>;
+                    const part = event.part && typeof event.part === 'object'
+                        ? event.part as Record<string, any>
+                        : {};
+                    const type = String(event.type || part.type || '');
+
+                    if (type === 'text') {
+                        const text = typeof part.text === 'string' ? part.text : '';
+                        if (text) {
+                            responseText += text;
+                            if (!emittedResponseNotice) {
+                                emitProgress('Model response received.');
+                                emittedResponseNotice = true;
+                            }
+                        }
+                        return;
+                    }
+
+                    if (type === 'tool_use' || type === 'tool' || type === 'tool-call') {
+                        const tool = String(part.tool || part.name || part.id || 'tool');
+                        const title = String(part.state?.title || part.title || part.description || '').trim();
+                        emitProgress(title ? `Using ${tool}: ${title}` : `Using ${tool}.`);
+                        return;
+                    }
+
+                    if (type === 'step_start' || type === 'step-start') {
+                        emitProgress('Started model step.');
+                        return;
+                    }
+
+                    if (type === 'step_finish' || type === 'step-finish') {
+                        const total = part.tokens?.total;
+                        emitProgress(typeof total === 'number' ? `Step complete (${total} tokens).` : 'Step complete.');
+                        return;
+                    }
+                } catch {
+                    emitProgress(trimmed);
+                }
+            };
+
+            const child = spawn(binary, args, {
+                cwd: opts.cwd,
+                env: opts.env,
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            if (opts.timeout && opts.timeout > 0) {
+                timer = setTimeout(() => {
+                    timedOut = true;
+                    child.kill('SIGTERM');
+                }, opts.timeout);
+            }
+
+            child.stdout!.on('data', (data: Buffer) => {
+                const chunk = data.toString();
+                stdoutBuffer += chunk;
+                pendingLine += chunk;
+                const lines = pendingLine.split('\n');
+                pendingLine = lines.pop() ?? '';
+                lines.forEach(handleStdoutLine);
+            });
+
+            child.stderr!.on('data', (data: Buffer) => {
+                const chunk = data.toString();
+                stderrChunks.push(chunk);
+                const lines = chunk.split('\n').filter(Boolean);
+                for (const raw of lines) {
+                    emitProgress(raw);
+                }
+            });
+
+            const cleanup = () => {
+                if (timer) clearTimeout(timer);
+            };
+
+            child.on('close', (code) => {
+                cleanup();
+                if (pendingLine.trim()) {
+                    handleStdoutLine(pendingLine);
+                }
+                if (timedOut || code !== 0) {
+                    const stderr = stderrChunks.join('').trim();
+                    const err = new Error(
+                        timedOut
+                            ? `Process timed out after ${opts.timeout}ms`
+                            : `Process exited with code ${code}${stderr ? ': ' + stderr.slice(0, 200) : ''}`
+                    );
+                    (err as ExecLikeError).stdout = stdoutBuffer;
+                    (err as ExecLikeError).stderr = stderr;
+                    reject(err);
+                } else {
+                    resolve(opts.normalize(responseText || stdoutBuffer));
+                }
+            });
+
+            child.on('error', (err) => {
+                cleanup();
+                reject(err);
+            });
+        });
     }
 
     /**
@@ -912,7 +1112,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
             case 'opencode':
                 return {
                     binary: backend.config.binaryPath,
-                    args: ['run', '--print-logs', '--format', 'json', builtPrompt],
+                    args: ['run', '--format', 'json', builtPrompt],
                 };
         }
     }
@@ -941,6 +1141,13 @@ export class CliAgentReviewScanner implements SecurityScanner {
             return trimmed;
         }
 
+        if (backend === 'opencode') {
+            const textOutput = this.extractOpencodeTextOutput(trimmed);
+            if (textOutput) {
+                return textOutput;
+            }
+        }
+
         if (backend === 'codex' && options.expectsJsonObject) {
             const jsonMatch = trimmed.match(/\{[\s\S]*\}$/);
             if (jsonMatch) {
@@ -963,6 +1170,35 @@ export class CliAgentReviewScanner implements SecurityScanner {
         }
 
         return trimmed;
+    }
+
+    private extractOpencodeTextOutput(output: string): string | undefined {
+        const lines = output.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+        if (lines.length === 0) {
+            return undefined;
+        }
+
+        const textParts: string[] = [];
+        let parsedEventCount = 0;
+        for (const line of lines) {
+            try {
+                const event = JSON.parse(line) as { type?: unknown; part?: { type?: unknown; text?: unknown } };
+                const type = String(event.type || event.part?.type || '');
+                if (!type) {
+                    continue;
+                }
+                parsedEventCount += 1;
+                if (type === 'text' && typeof event.part?.text === 'string') {
+                    textParts.push(event.part.text);
+                }
+            } catch {
+                return undefined;
+            }
+        }
+
+        return parsedEventCount > 0 && textParts.length > 0
+            ? textParts.join('')
+            : undefined;
     }
 
     private extractJson(output: string): unknown {
