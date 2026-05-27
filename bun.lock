@@ -14,6 +14,19 @@
         "typescript": "^5.9.3",
       },
     },
+    "packages/cli": {
+      "name": "@backbrain/cli",
+      "version": "0.1.0",
+      "bin": {
+        "backbrain": "./bin/backbrain.js",
+      },
+      "dependencies": {
+        "@backbrain/core": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "^5.9.3",
+      },
+    },
     "packages/core": {
       "name": "@backbrain/core",
       "version": "0.1.0",
@@ -112,6 +125,8 @@
     "@babel/traverse": ["@babel/traverse@7.28.5", "", { "dependencies": { "@babel/code-frame": "^7.27.1", "@babel/generator": "^7.28.5", "@babel/helper-globals": "^7.28.0", "@babel/parser": "^7.28.5", "@babel/template": "^7.27.2", "@babel/types": "^7.28.5", "debug": "^4.3.1" } }, "sha512-TCCj4t55U90khlYkVV/0TfkJkAkUg3jZFA3Neb7unZT8CPok7iiRfaX0F+WnqWqt7OxhOn0uBKXCw4lbL8W0aQ=="],
 
     "@babel/types": ["@babel/types@7.28.5", "", { "dependencies": { "@babel/helper-string-parser": "^7.27.1", "@babel/helper-validator-identifier": "^7.28.5" } }, "sha512-qQ5m48eI/MFLQ5PxQj4PFaprjyCTLI37ElWMmNs0K8Lk3dVeOdNpB3ks8jc7yM5CDmVC73eMVk/trk3fgmrUpA=="],
+
+    "@backbrain/cli": ["@backbrain/cli@workspace:packages/cli"],
 
     "@backbrain/core": ["@backbrain/core@workspace:packages/core"],
 
