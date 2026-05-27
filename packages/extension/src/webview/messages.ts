@@ -41,6 +41,8 @@ export type WebviewMessage =
     | { type: 'requestScan'; target?: ScanTarget }
     | { type: 'requestScanFile' }
     | { type: 'refreshConfiguration' }
+    | { type: 'selectCustomPaths' }
+    | { type: 'checkChangedFiles' }
     | { type: 'updateScannerSelection'; scannerId: string; enabled: boolean }
     | { type: 'updateAgentReviewEnabled'; enabled: boolean }
     | { type: 'updateAgentBackendSelection'; backendId: AgentBackendId; enabled: boolean }
@@ -73,6 +75,8 @@ export type ExtensionMessage =
     | { type: 'configurationState'; state: ConfigurationState }
     | { type: 'issuesUpdated'; issues: IssueData[]; batchInfo?: { current: number; total: number } }
     | { type: 'setScanDepthTier'; label: string }
+    | { type: 'customPathsSelected'; displayNames: string[] }
+    | { type: 'changedFilesStatus'; count?: number; error?: string }
     | { type: 'explanationStarted'; issueId: string; provider?: string | null }
     | { type: 'explanationChunk'; issueId: string; chunk: string }
     | { type: 'explanationComplete'; issueId: string; content: string; provider?: string | null }

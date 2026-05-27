@@ -10,13 +10,13 @@ import type {
     AgentScanDepth,
     ConfigurationState,
     DebugStep,
+    DebugStepStatus,
     ExtensionMessage,
     FixData,
     IssueData,
     ScanTarget,
 } from './messages';
 import { IssueItem } from './components/IssueItem';
-import { Visualizer } from './components/Visualizer';
 import { ErrorBoundary, ErrorCard } from './components/ErrorBoundary';
 import './styles/theme.css';
 
@@ -47,10 +47,9 @@ type IconName =
     | 'spark'
     | 'users'
     | 'x'
-    | 'zap'
-    | 'graph';
+    | 'zap';
 
-type TabId = 'scan' | 'issues' | 'agents' | 'visualizer';
+type TabId = 'scan' | 'issues' | 'agents';
 type SortMethod = 'severity' | 'filename';
 type FilterMethod = 'all' | 'ai' | 'deterministic';
 
@@ -73,7 +72,6 @@ const ICON_PATHS: Record<IconName, string[]> = {
     users: ['M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2', 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', 'M22 21v-2a4 4 0 0 0-3-3.9', 'M16 3.1a4 4 0 0 1 0 7.8'],
     x: ['M18 6 6 18', 'M6 6l12 12'],
     zap: ['M13 2 3 14h8l-1 8 11-13h-8Z'],
-    graph: ['M12 3v3', 'M19 9h-3.5', 'M5 9h3.5', 'M12 18v3', 'M12 6a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z', 'M19 12a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z', 'M5 12a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z']
 };
 
 function Icon({ name, className }: { name: IconName; className?: string }) {
@@ -107,8 +105,6 @@ const severityRank: Record<string, number> = {
     low: 3,
     info: 4,
 };
-
-const basename = (filePath: string): string => filePath.split(/[\\/]/).pop() || filePath;
 
 const phaseLabels: Record<string, string> = {
     deterministic: 'Running deterministic scanners...',
@@ -157,109 +153,18 @@ const getDepthAgentCount = (depth: AgentScanDepth): number => {
     }
 };
 
-const ALL_SPECIALISTS = [
-    { name: 'AI Orchestration Security', focus: 'prompt injection, agent sandbox bypasses, and insecure command templates' },
-    { name: 'CLI Credential Auditor', focus: 'insecure CLI token storage, environment variable exposure, and path hijacking' },
-    { name: 'Input Sanitization Auditor', focus: 'shell injection, regex bypasses, and untrusted path traversals' },
-    { name: 'Dependency Vulnerability Specialist', focus: 'outdated libraries, transitive vulnerable deps, and license risks' },
-    { name: 'AST Rule Validator', focus: 'unhandled promises, type coercion errors, and naming mismatches' },
-    { name: 'General Security Expert', focus: 'OWASP Top 10 vulnerabilities, code smells, and API contract breaches' }
-];
-
-type LogLineKind = 'thinking' | 'done' | 'assistant' | 'command' | 'output' | 'tool' | 'plain';
-
-function classifyLogLine(line: string): { kind: LogLineKind; prefix: string; body: string } {
-    // <backend>: thinking  /  <backend>: stop (N tokens)  /  <backend>: complete
-    if (/^(opencode|codex|gemini):\s/i.test(line)) {
-        const colonIdx = line.indexOf(':');
-        const prefix = line.slice(0, colonIdx);
-        const body = line.slice(colonIdx + 2);
-        const isDone = /^(stop|complete|end|aggregat|verif)/i.test(body);
-        return { kind: isDone ? 'done' : 'thinking', prefix, body };
-    }
-    // assistant: <model text>
-    if (/^assistant:\s/i.test(line)) {
-        return { kind: 'assistant', prefix: 'assistant', body: line.replace(/^assistant:\s*/i, '') };
-    }
-    // $ command
-    if (/^\$\s/.test(line)) {
-        return { kind: 'command', prefix: '$', body: line.slice(2) };
-    }
-    // indented output (2-space indent)
-    if (/^  \S/.test(line)) {
-        return { kind: 'output', prefix: '', body: line.trimStart() };
-    }
-    // tool: title (status)  — e.g. "bash: Run command (completed)"
-    if (/^[\w_-]+:\s/.test(line)) {
-        const colonIdx = line.indexOf(':');
-        return { kind: 'tool', prefix: line.slice(0, colonIdx), body: line.slice(colonIdx + 2) };
-    }
-    return { kind: 'plain', prefix: '', body: line };
+function basename(filePath: string): string {
+    return filePath.split(/[\\/]/).pop() || filePath;
 }
 
-const LOG_KIND_STYLES: Record<LogLineKind, React.CSSProperties> = {
-    thinking: { color: 'var(--bb-color-muted)', fontStyle: 'italic' },
-    done:     { color: 'var(--bb-color-success)' },
-    assistant:{ color: 'var(--bb-color-foreground)' },
-    command:  { color: 'var(--bb-color-warning)' },
-    output:   { color: 'var(--bb-color-subtle)', paddingLeft: '12px' },
-    tool:     { color: 'var(--bb-color-link)' },
-    plain:    { color: 'var(--bb-color-muted)' },
-};
-
-const LOG_KIND_PREFIX_STYLES: Record<LogLineKind, React.CSSProperties> = {
-    thinking: { color: 'var(--bb-color-muted)', marginRight: '5px' },
-    done:     { color: 'var(--bb-color-success)', marginRight: '5px' },
-    assistant:{ color: 'var(--bb-color-muted)', marginRight: '5px' },
-    command:  { color: 'var(--bb-color-warning)', marginRight: '5px' },
-    output:   {},
-    tool:     { color: 'var(--bb-color-link)', opacity: 0.7, marginRight: '4px' },
-    plain:    {},
-};
-
-const OpenCodeTerminal: React.FC<{ logs: string[]; backend?: string }> = ({ logs, backend = 'opencode' }) => {
-    const containerRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (containerRef.current) {
-            containerRef.current.scrollTop = containerRef.current.scrollHeight;
-        }
-    }, [logs]);
-
-    return (
-        <div className="bb-terminal">
-            <div className="bb-terminal-header">
-                <span className="bb-terminal-dot bb-terminal-dot--red" />
-                <span className="bb-terminal-dot bb-terminal-dot--yellow" />
-                <span className="bb-terminal-dot bb-terminal-dot--green" />
-                <span className="bb-terminal-title">{backend}</span>
-                <span className="bb-terminal-count">{logs.length}</span>
-            </div>
-            <div ref={containerRef} className="bb-terminal-body">
-                {logs.length === 0 ? (
-                    <span className="bb-terminal-empty">Waiting for agent output...</span>
-                ) : (
-                    logs.map((line, i) => {
-                        const { kind, prefix, body } = classifyLogLine(line);
-                        return (
-                            <div key={i} className="bb-terminal-line" style={LOG_KIND_STYLES[kind]}>
-                                {prefix && (
-                                    <span className="bb-terminal-prefix" style={LOG_KIND_PREFIX_STYLES[kind]}>
-                                        {kind === 'command' ? '$ ' : `${prefix}: `}
-                                    </span>
-                                )}
-                                <span className="bb-terminal-body-text">{body}</span>
-                            </div>
-                        );
-                    })
-                )}
-            </div>
-        </div>
-    );
-};
-
 const App = () => {
-    const initialState = vscode.getState() as { issues?: IssueData[]; scanDepthTier?: string } | undefined;
+    const initialState = vscode.getState() as {
+        issues?: IssueData[];
+        scanDepthTier?: string;
+        selectedTarget?: ScanTarget;
+        customPathsDisplayNames?: string[];
+        changedFilesStatus?: { count?: number; error?: string; loading?: boolean } | null;
+    } | undefined;
     const [issues, setIssues] = useState<IssueData[]>(initialState?.issues || []);
     const [configuration, setConfiguration] = useState<ConfigurationState>(defaultConfiguration);
     const [scanDepthTier, setScanDepthTier] = useState<string>(initialState?.scanDepthTier || 'Developer Scan');
@@ -270,7 +175,10 @@ const App = () => {
     const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
     const [explanations, setExplanations] = useState<Record<string, ExplanationState>>({});
     const [activeTab, setActiveTab] = useState<TabId>('scan');
-    const [selectedTarget, setSelectedTarget] = useState<ScanTarget>('workspace');
+    const [selectedTarget, setSelectedTarget] = useState<ScanTarget>(initialState?.selectedTarget || 'workspace');
+    const [customPathsDisplayNames, setCustomPathsDisplayNames] = useState<string[]>(initialState?.customPathsDisplayNames || []);
+    const [changedFilesStatus, setChangedFilesStatus] = useState<{ count?: number; error?: string; loading?: boolean } | null>(initialState?.changedFilesStatus || null);
+
     const selectedTargetRef = useRef(selectedTarget);
     useEffect(() => {
         selectedTargetRef.current = selectedTarget;
@@ -281,11 +189,17 @@ const App = () => {
     const [debugMode, setDebugMode] = useState(false);
     const [debugSteps, setDebugSteps] = useState<DebugStep[]>([]);
     const [debugPhase, setDebugPhase] = useState('');
-    const [agentLogs, setAgentLogs] = useState<string[]>([]);
+    const [lastScanSpecialists, setLastScanSpecialists] = useState<Array<{ name: string; focus: string }>>([]);
 
     useEffect(() => {
-        vscode.setState({ issues, scanDepthTier });
-    }, [issues, scanDepthTier]);
+        vscode.setState({
+            issues,
+            scanDepthTier,
+            selectedTarget,
+            customPathsDisplayNames,
+            changedFilesStatus
+        });
+    }, [issues, scanDepthTier, selectedTarget, customPathsDisplayNames, changedFilesStatus]);
 
     useEffect(() => {
         const handleMessage = (event: MessageEvent<ExtensionMessage>) => {
@@ -298,14 +212,12 @@ const App = () => {
                     setScanStatus(null);
                     setBatchProgress(null);
                     setDebugSteps([]);
-                    setAgentLogs([]);
                     break;
                 case 'scanComplete':
                     setIssues(message.issues);
                     setLoading(false);
                     setBatchProgress(null);
                     setScanStatus(null);
-                    setAgentLogs([]);
                     setActiveTab('issues');
                     break;
                 case 'issuesUpdated':
@@ -324,28 +236,8 @@ const App = () => {
                     break;
                 case 'scanStatus':
                     setScanStatus(message);
-                    if (message.agentLog) {
-                        setAgentLogs(prev => [...prev.slice(-199), message.agentLog!]);
-                    } else {
-                        // Synthesise a phase-boundary line so the terminal always has
-                        // content, even when the backend doesn't stream NDJSON events.
-                        setAgentLogs(prev => {
-                            const b = message.backend || 'opencode';
-                            const phaseLines: Record<string, string> = {
-                                'deterministic':    `${b}: running deterministic scanners`,
-                                'agent-planner':    `${b}: planner running`,
-                                'agent-specialists':`${b}: specialist agents reviewing code`,
-                                'agent-aggregator': `${b}: aggregating findings`,
-                                'agent-verification':`${b}: verifying findings`,
-                                'degraded':         `${b}: completed with warnings`,
-                                'complete':         `${b}: complete`,
-                            };
-                            const synthetic = phaseLines[message.phase];
-                            if (!synthetic) return prev;
-                            // Avoid repeating the same phase line consecutively
-                            if (prev[prev.length - 1] === synthetic) return prev;
-                            return [...prev.slice(-199), synthetic];
-                        });
+                    if (message.phase === 'agent-specialists' && message.agents && message.agents.length > 0) {
+                        setLastScanSpecialists(message.agents.map(name => ({ name, focus: '' })));
                     }
                     break;
                 case 'configurationState':
@@ -354,6 +246,16 @@ const App = () => {
                     break;
                 case 'setScanDepthTier':
                     setScanDepthTier(message.label);
+                    break;
+                case 'customPathsSelected':
+                    setCustomPathsDisplayNames(message.displayNames);
+                    break;
+                case 'changedFilesStatus':
+                    setChangedFilesStatus({
+                        count: message.count,
+                        error: message.error,
+                        loading: false,
+                    });
                     break;
                 case 'fixSuggested':
                     setActiveFix({ issueId: message.issueId, fix: message.fix });
@@ -507,14 +409,14 @@ const App = () => {
                 </header>
 
                 <nav className="bb-tab-row">
-                    {(['scan', 'issues', 'agents', 'visualizer'] as TabId[]).map(tab => (
+                    {(['scan', 'issues', 'agents'] as TabId[]).map(tab => (
                         <button
                             key={tab}
                             className={`bb-tab${activeTab === tab ? ' bb-tab--active' : ''}`}
                             onClick={() => setActiveTab(tab)}
                         >
-                            <Icon name={tab === 'scan' ? 'play' : tab === 'issues' ? 'shield' : tab === 'agents' ? 'users' : 'graph'} />
-                            <span>{tab === 'scan' ? 'Scan' : tab === 'issues' ? 'Issues' : tab === 'agents' ? 'Agents' : 'Visualizer'}</span>
+                            <Icon name={tab === 'scan' ? 'play' : tab === 'issues' ? 'shield' : 'users'} />
+                            <span>{tab === 'scan' ? 'Scan' : tab === 'issues' ? 'Issues' : 'Agents'}</span>
                         </button>
                     ))}
                 </nav>
@@ -633,27 +535,89 @@ const App = () => {
                             </section>
                         )}
 
-                        {loading && configuration.agentReviewEnabled && (
-                            <section className="bb-terminal-section">
-                                <OpenCodeTerminal logs={agentLogs} backend={scanStatus?.backend || 'opencode'} />
-                            </section>
-                        )}
-
                         <section className="bb-section">
                             <div className="bb-section-title">Scan target</div>
                             <div className="bb-card-grid">
-                                {SCAN_TARGETS.map(target => (
-                                    <button
-                                        key={target.id}
-                                        className={`bb-scan-card${selectedTarget === target.id ? ' bb-scan-card--active' : ''}`}
-                                        onClick={() => setSelectedTarget(target.id)}
-                                        disabled={loading}
-                                    >
-                                        <span className="bb-card-icon"><Icon name={target.icon} /></span>
-                                        <span className="bb-card-label">{target.label}</span>
-                                        <span className="bb-card-detail">{target.description}</span>
-                                    </button>
-                                ))}
+                                {SCAN_TARGETS.map(target => {
+                                    const isSelected = selectedTarget === target.id;
+                                    return (
+                                        <div
+                                            key={target.id}
+                                            role="button"
+                                            tabIndex={loading ? -1 : 0}
+                                            className={`bb-scan-card${isSelected ? ' bb-scan-card--active' : ''}`}
+                                            style={loading ? { opacity: 0.55, cursor: 'not-allowed', pointerEvents: 'none' } : undefined}
+                                            onClick={() => {
+                                                if (loading) return;
+                                                setSelectedTarget(target.id);
+                                                if (target.id === 'custom') {
+                                                    vscode.postMessage({ type: 'selectCustomPaths' });
+                                                } else if (target.id === 'changed') {
+                                                    setChangedFilesStatus({ loading: true });
+                                                    vscode.postMessage({ type: 'checkChangedFiles' });
+                                                }
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (loading) return;
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    setSelectedTarget(target.id);
+                                                    if (target.id === 'custom') {
+                                                        vscode.postMessage({ type: 'selectCustomPaths' });
+                                                    } else if (target.id === 'changed') {
+                                                        setChangedFilesStatus({ loading: true });
+                                                        vscode.postMessage({ type: 'checkChangedFiles' });
+                                                    }
+                                                }
+                                            }}
+                                        >
+                                            <span className="bb-card-icon"><Icon name={target.icon} /></span>
+                                            <span className="bb-card-label">{target.label}</span>
+                                            <span className="bb-card-detail">{target.description}</span>
+
+                                            {target.id === 'custom' && customPathsDisplayNames.length > 0 && (
+                                                <div style={{ marginTop: '8px', borderTop: '0.5px solid var(--bb-color-border)', paddingTop: '6px', width: '100%', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                    <div style={{ fontSize: '10px', color: 'var(--bb-color-foreground)', wordBreak: 'break-all', maxHeight: '48px', overflowY: 'auto' }}>
+                                                        {customPathsDisplayNames.join(', ')}
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        style={{
+                                                            alignSelf: 'flex-start',
+                                                            fontSize: '9px',
+                                                            padding: '2px 6px',
+                                                            background: 'var(--bb-color-panel-strong)',
+                                                            border: '0.5px solid var(--bb-color-border)',
+                                                            borderRadius: '3px',
+                                                            cursor: 'pointer',
+                                                            color: 'var(--bb-color-link)',
+                                                            fontWeight: 'var(--bb-font-weight-medium)'
+                                                        }}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            vscode.postMessage({ type: 'selectCustomPaths' });
+                                                        }}
+                                                    >
+                                                        Change
+                                                    </button>
+                                                </div>
+                                            )}
+
+                                            {target.id === 'changed' && changedFilesStatus && (
+                                                <div style={{ marginTop: '6px', fontSize: '10px', color: changedFilesStatus.error ? 'var(--bb-color-error)' : 'var(--bb-color-muted)' }}>
+                                                    {changedFilesStatus.loading ? (
+                                                        <span>Checking changed files...</span>
+                                                    ) : changedFilesStatus.error ? (
+                                                        <span>{changedFilesStatus.error}</span>
+                                                    ) : changedFilesStatus.count === 0 ? (
+                                                        <span>No changed files found</span>
+                                                    ) : (
+                                                        <span>{changedFilesStatus.count} changed file{changedFilesStatus.count === 1 ? '' : 's'} detected</span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
                         </section>
 
@@ -902,15 +866,17 @@ const App = () => {
                                 </div>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                    {(() => {
+                                    {lastScanSpecialists.length === 0 ? (
+                                        <div className="bb-empty-state">
+                                            <div className="bb-empty-title">No specialist data yet</div>
+                                            <div className="bb-empty-copy">Run a scan with Agent Review enabled to see specialist details.</div>
+                                        </div>
+                                    ) : (() => {
                                         const agentIssues = issues.filter(i => i.sourceType === 'agent-only' || i.sourceType === 'agent-grounded');
-                                        const count = getDepthAgentCount(configuration.scanDepth);
-                                        const activeSpecs = ALL_SPECIALISTS.slice(0, count);
 
-                                        return activeSpecs.map((specTemplate, idx) => {
-                                            const specName = specTemplate.name;
-                                            const specFocus = specTemplate.focus;
-                                            
+                                        return lastScanSpecialists.map((spec, idx) => {
+                                            const specName = spec.name;
+
                                             const specFindings = agentIssues.filter(issue => {
                                                 const roles = issue.sourceRoles || [];
                                                 if (roles.length > 0) {
@@ -928,11 +894,11 @@ const App = () => {
                                             };
 
                                             return (
-                                                <div 
-                                                    key={specName} 
+                                                <div
+                                                    key={specName}
                                                     style={{ border: '0.5px solid var(--bb-color-border)', borderRadius: '7px', overflow: 'hidden' }}
                                                 >
-                                                    <div 
+                                                    <div
                                                         style={{ padding: '8px 10px', background: 'var(--bb-color-panel-soft)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
                                                         onClick={() => toggleSpec(specName)}
                                                     >
@@ -941,16 +907,16 @@ const App = () => {
                                                             <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--bb-color-foreground)' }}>{specName}</span>
                                                         </div>
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                                            <span style={{ 
-                                                                fontSize: '10px', 
-                                                                padding: '1px 5px', 
-                                                                borderRadius: '4px', 
-                                                                background: specFindings.length > 0 ? 'var(--bb-severity-high-bg)' : 'var(--bb-color-panel-strong)', 
-                                                                color: specFindings.length > 0 ? 'var(--bb-severity-high)' : 'var(--bb-color-muted)' 
+                                                            <span style={{
+                                                                fontSize: '10px',
+                                                                padding: '1px 5px',
+                                                                borderRadius: '4px',
+                                                                background: specFindings.length > 0 ? 'var(--bb-severity-high-bg)' : 'var(--bb-color-panel-strong)',
+                                                                color: specFindings.length > 0 ? 'var(--bb-severity-high)' : 'var(--bb-color-muted)'
                                                             }}>
                                                                 {specFindings.length} {specFindings.length === 1 ? 'finding' : 'findings'}
                                                             </span>
-                                                            <span style={{ 
+                                                            <span style={{
                                                                 display: 'inline-block',
                                                                 transform: isExpanded ? 'rotate(180deg)' : 'none',
                                                                 transition: 'transform var(--bb-transition-fast)',
@@ -964,7 +930,7 @@ const App = () => {
                                                     {isExpanded && (
                                                         <div style={{ padding: '8px 10px', borderTop: '0.5px solid var(--bb-color-border)', background: 'var(--bb-color-panel)' }}>
                                                             <div style={{ fontSize: '10px', color: 'var(--bb-color-muted)', marginBottom: '6px' }}>
-                                                                Backend: {configuration.agentBackends.find(b => b.enabled)?.label || 'Gemini'} · Focus: {specFocus}
+                                                                Backend: {configuration.agentBackends.find(b => b.enabled)?.label || 'Gemini'}
                                                             </div>
                                                             {specFindings.length === 0 ? (
                                                                 <div style={{ fontSize: '11px', color: 'var(--bb-color-muted)', fontStyle: 'italic', padding: '4px 0' }}>
@@ -994,12 +960,6 @@ const App = () => {
                                 </div>
                             )}
                         </section>
-                    </main>
-                )}
-
-                {activeTab === 'visualizer' && (
-                    <main className="bb-view">
-                        <Visualizer issues={issues} />
                     </main>
                 )}
             </div>

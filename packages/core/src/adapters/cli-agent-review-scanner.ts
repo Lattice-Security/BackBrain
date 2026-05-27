@@ -35,8 +35,6 @@ interface ExecLikeError {
 interface BackendExecutionOptions {
     isReadinessProbe?: boolean;
     expectsJsonObject?: boolean;
-    /** Callback for each progress line emitted during execution (streaming) */
-    onStderrLine?: (line: string) => void;
 }
 
 interface BackendReadinessState {
@@ -72,6 +70,16 @@ export interface CliAgentReviewScannerOptions {
     reviewScope?: 'workspace' | 'changed-files' | 'both';
     preferredBackend?: AgentBackendId;
     backends?: Partial<Record<AgentBackendId, Partial<AgentBackendConfig>>>;
+    /** Hard ceiling for the planner call (default: 60 000 ms). */
+    plannerTimeoutMs?: number;
+    /** Hard ceiling per specialist call (default: 180 000 ms). */
+    specialistTimeoutMs?: number;
+    /** Hard ceiling for the aggregator call (default: 60 000 ms). */
+    aggregatorTimeoutMs?: number;
+    /** Absolute ceiling for the entire scan (default: 600 000 ms). */
+    totalScanTimeoutMs?: number;
+    /** Inactivity timeout — kills a process that emits no stdout for this long (default: 30 000 ms). */
+    inactivityTimeoutMs?: number;
     /**
      * Called when a backend fails with a confirmed auth error.
      * Use this from the extension layer to show a VS Code notification
@@ -137,6 +145,11 @@ export class CliAgentReviewScanner implements SecurityScanner {
     private preferredBackend: AgentBackendId | undefined;
     private backends: Record<AgentBackendId, AgentBackendConfig>;
     private readonly onAuthFailure: ((backend: AgentBackendId) => void) | undefined;
+    private readonly plannerTimeoutMs: number;
+    private readonly specialistTimeoutMs: number;
+    private readonly aggregatorTimeoutMs: number;
+    private readonly totalScanTimeoutMs: number;
+    private readonly inactivityTimeoutMs: number;
     /**
      * Readiness cache — only stores outcomes that are stable across a session:
      *   ready: true  (including rate-limited)  → cached permanently
@@ -154,6 +167,11 @@ export class CliAgentReviewScanner implements SecurityScanner {
         this.reviewScope = options.reviewScope ?? 'both';
         this.preferredBackend = options.preferredBackend;
         this.onAuthFailure = options.onAuthFailure;
+        this.plannerTimeoutMs = options.plannerTimeoutMs ?? 60_000;
+        this.specialistTimeoutMs = options.specialistTimeoutMs ?? 180_000;
+        this.aggregatorTimeoutMs = options.aggregatorTimeoutMs ?? 60_000;
+        this.totalScanTimeoutMs = options.totalScanTimeoutMs ?? 600_000;
+        this.inactivityTimeoutMs = options.inactivityTimeoutMs ?? 30_000;
         this.backends = {
             codex: {
                 enabled: true,
@@ -267,7 +285,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
     }
 
     async scanWithContext(paths: string[], context: SecurityScanContext): Promise<ScanResult> {
-        const startTime = Date.now();
+        const scanStart = Date.now();
         const availableBackends = await this.getAvailableBackends();
 
         if (availableBackends.length === 0) {
@@ -281,7 +299,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
             return {
                 issues: [],
                 scannedFiles: paths,
-                scanDurationMs: Date.now() - startTime,
+                scanDurationMs: Date.now() - scanStart,
                 scannerInfo: 'AI Agent Review (no backends available)',
             };
         }
@@ -321,20 +339,13 @@ export class CliAgentReviewScanner implements SecurityScanner {
         });
         let planner: PlannerOutput;
         try {
-            const plannerRaw = await this.runBackend(leadBackend, plannerPrompt, repositoryRoot, {
-                onStderrLine: (line) => {
-                    this.reportStatus(context, {
-                        phase: 'agent-planner',
-                        level: 'info',
-                        message: `AI review planner running with ${leadBackend.id}.`,
-                        backend: leadBackend.id,
-                        agentLog: line,
-                    });
-                },
-            });
+            const plannerRaw = await this.runBackend(
+                leadBackend, plannerPrompt, repositoryRoot,
+                this.plannerTimeoutMs, 'planner',
+            );
             planner = plannerSchema.parse(this.extractJson(plannerRaw));
         } catch (error) {
-            logger.warn('Agent review planner failed; skipping AI review', { error: toError(error) });
+            logger.warn('Planner failed or timed out — aborting agent scan', { error: toError(error) });
             this.reportStatus(context, {
                 phase: 'degraded',
                 level: 'warn',
@@ -345,8 +356,8 @@ export class CliAgentReviewScanner implements SecurityScanner {
             return {
                 issues: [],
                 scannedFiles: paths,
-                scanDurationMs: Date.now() - startTime,
-                scannerInfo: `AI Agent Review (${leadBackend.id} planner failed)`,
+                scanDurationMs: Date.now() - scanStart,
+                scannerInfo: this.buildScannerInfo(availableBackends, [], 'planner failed'),
             };
         }
         const specialists = planner.specialists.slice(0, this.maxSpecialists);
@@ -366,8 +377,8 @@ export class CliAgentReviewScanner implements SecurityScanner {
             return {
                 issues: [],
                 scannedFiles: paths,
-                scanDurationMs: Date.now() - startTime,
-                scannerInfo: `AI Agent Review (${leadBackend.id}, no specialists selected)`,
+                scanDurationMs: Date.now() - scanStart,
+                scannerInfo: this.buildScannerInfo(availableBackends, [], 'no specialists selected'),
             };
         }
 
@@ -377,41 +388,60 @@ export class CliAgentReviewScanner implements SecurityScanner {
             message: `Running ${specialists.length} AI specialist review(s).`,
             backend: leadBackend.id,
         });
-        const specialistOutcomes = await this.runWithConcurrency(
-            specialists,
-            this.specialistConcurrency,
-            (specialist, index) => this.runSpecialistSafely(
-                specialist,
-                availableBackends[index % availableBackends.length]!,
-                {
-                    repositoryRoot,
-                    deterministicIssues,
-                    changedFiles,
-                    repoSummary: planner.repoSummary,
-                },
-                (line) => {
-                    this.reportStatus(context, {
-                        phase: 'agent-specialists',
-                        level: 'info',
-                        message: `Running ${specialists.length} AI specialist review(s).`,
-                        backend: leadBackend.id,
-                        agentLog: line,
-                    });
-                }
-            )
-        );
-        const specialistResults = specialistOutcomes
-            .filter((result): result is NonNullable<typeof result> => result !== null);
-        const failedSpecialists = specialistOutcomes.length - specialistResults.length;
+
+        const timedOutSpecialists: string[] = [];
+        const remainingMs = this.totalScanTimeoutMs - (Date.now() - scanStart);
+
+        let specialistResults: Awaited<ReturnType<typeof this.runSpecialistSafe>>[];
+        try {
+            specialistResults = await Promise.race([
+                Promise.all(
+                    await this.runWithConcurrency(
+                        specialists,
+                        this.specialistConcurrency,
+                        (specialist, index) => this.runSpecialistSafe(
+                            specialist,
+                            availableBackends[index % availableBackends.length]!,
+                            {
+                                repositoryRoot,
+                                deterministicIssues,
+                                changedFiles,
+                                repoSummary: planner.repoSummary,
+                            },
+                            timedOutSpecialists,
+                        ),
+                    ),
+                ),
+                new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('Total scan ceiling reached')), remainingMs),
+                ),
+            ]);
+        } catch {
+            logger.warn('Total scan timeout hit during specialists — returning partial results', {
+                completedSpecialists: specialistResults!?.length ?? 0,
+            });
+            const partialFindings = (specialistResults! ?? []).flatMap(r =>
+                r.findings.map(f => ({ ...f, roleName: r.roleName, backend: r.backend }))
+            );
+            return {
+                issues: partialFindings.map(f => this.toIssueFromRawFinding(f)),
+                scannedFiles: paths,
+                scanDurationMs: Date.now() - scanStart,
+                scannerInfo: this.buildScannerInfo(availableBackends, timedOutSpecialists, 'total ceiling hit'),
+            };
+        }
+
+        const timedOutCount = timedOutSpecialists.length;
         logger.info('Agent review specialists completed', {
             specialistCount: specialistResults.length,
+            timedOutCount,
             findingsCount: specialistResults.reduce((count, item) => count + item.findings.length, 0),
         });
-        if (failedSpecialists > 0) {
+        if (timedOutCount > 0) {
             this.reportStatus(context, {
                 phase: 'degraded',
                 level: 'warn',
-                message: `${failedSpecialists} AI specialist review(s) failed; continuing with partial coverage.`,
+                message: `${timedOutCount} AI specialist review(s) timed out; continuing with partial coverage.`,
                 backend: leadBackend.id,
                 degraded: true,
             });
@@ -442,17 +472,10 @@ export class CliAgentReviewScanner implements SecurityScanner {
             rawFindingCount: rawAgentFindings.length,
         });
         try {
-            const aggregatorRaw = await this.runBackend(leadBackend, aggregatorPrompt, repositoryRoot, {
-                onStderrLine: (line) => {
-                    this.reportStatus(context, {
-                        phase: 'agent-aggregator',
-                        level: 'info',
-                        message: 'Merging AI specialist findings.',
-                        backend: leadBackend.id,
-                        agentLog: line,
-                    });
-                },
-            });
+            const aggregatorRaw = await this.runBackend(
+                leadBackend, aggregatorPrompt, repositoryRoot,
+                this.aggregatorTimeoutMs, 'aggregator',
+            );
 
             // Attempt 1: standard extraction + Zod validation.
             let aggregated: AggregatorOutput | undefined;
@@ -489,8 +512,9 @@ export class CliAgentReviewScanner implements SecurityScanner {
             });
         } catch (error) {
             usedFallbackAggregation = true;
-            logger.warn('Agent review aggregator failed; falling back to raw specialist findings', {
+            logger.warn('Aggregator timed out or failed — returning raw specialist findings', {
                 error: toError(error),
+                rawFindingCount: rawAgentFindings.length,
             });
             this.reportStatus(context, {
                 phase: 'degraded',
@@ -499,19 +523,12 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 backend: leadBackend.id,
                 degraded: true,
             });
-            aggregatedFindings = rawAgentFindings.map((finding) => ({
-                title: finding.title,
-                description: finding.description,
-                severity: finding.severity,
-                confidence: finding.confidence,
-                filePath: finding.filePath,
-                line: finding.line,
-                evidence: finding.evidence,
-                remediation: finding.remediation,
-                sourceRoles: [finding.roleName],
-                groundedByDeterministicFindings: false,
-                linkedDeterministicFindingIds: [],
-            }));
+            return {
+                issues: rawAgentFindings.map(f => this.toIssueFromRawFinding(f)),
+                scannedFiles: paths,
+                scanDurationMs: Date.now() - scanStart,
+                scannerInfo: this.buildScannerInfo(availableBackends, timedOutSpecialists, 'aggregator skipped'),
+            };
         }
 
         this.reportStatus(context, {
@@ -525,7 +542,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
             repositoryRoot,
             leadBackend.id,
             {
-                degraded: usedFallbackAggregation || failedSpecialists > 0,
+                degraded: usedFallbackAggregation || timedOutCount > 0,
                 deterministicIssues,
             }
         );
@@ -544,8 +561,8 @@ export class CliAgentReviewScanner implements SecurityScanner {
         return {
             issues: verifiedIssues,
             scannedFiles: paths,
-            scanDurationMs: Date.now() - startTime,
-            scannerInfo: `AI Agent Review (${availableBackends.map(b => b.id).join(', ')}, verified: ${verifiedCount}, downgraded: ${downgradedCount})`,
+            scanDurationMs: Date.now() - scanStart,
+            scannerInfo: this.buildScannerInfo(availableBackends, timedOutSpecialists, `verified: ${verifiedCount}, downgraded: ${downgradedCount}`),
         };
     }
 
@@ -585,8 +602,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
             deterministicIssues: SecurityIssue[];
             changedFiles: string[];
             repoSummary: string;
-        },
-        onStderrLine?: (line: string) => void,
+        }
     ): Promise<{ roleName: string; backend: string; findings: SpecialistOutput['findings'] }> {
         logger.info('Running agent review specialist', {
             roleName: specialist.name,
@@ -600,10 +616,9 @@ export class CliAgentReviewScanner implements SecurityScanner {
             deterministicIssues: context.deterministicIssues,
             changedFiles: context.changedFiles,
         });
-        const raw = await this.runBackend(backend, prompt, context.repositoryRoot,
-            onStderrLine
-                ? { onStderrLine: (line) => onStderrLine(`[${specialist.name}] ${line}`) }
-                : {}
+        const raw = await this.runBackend(
+            backend, prompt, context.repositoryRoot,
+            this.specialistTimeoutMs, `specialist:${specialist.name}`,
         );
         const parsed = specialistSchema.parse(this.extractJson(raw));
         logger.info('Agent review specialist completed', {
@@ -618,7 +633,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         };
     }
 
-    private async runSpecialistSafely(
+    private async runSpecialistSafe(
         specialist: PlannerOutput['specialists'][number],
         backend: { id: AgentBackendId; config: AgentBackendConfig },
         context: {
@@ -627,17 +642,18 @@ export class CliAgentReviewScanner implements SecurityScanner {
             changedFiles: string[];
             repoSummary: string;
         },
-        onStderrLine?: (line: string) => void,
-    ): Promise<{ roleName: string; backend: string; findings: SpecialistOutput['findings'] } | null> {
+        timedOutSpecialists: string[],
+    ): Promise<{ roleName: string; backend: string; findings: SpecialistOutput['findings'] }> {
         try {
-            return await this.runSpecialist(specialist, backend, context, onStderrLine);
+            return await this.runSpecialist(specialist, backend, context);
         } catch (error) {
-            logger.warn('Agent review specialist failed', {
+            const reason = toError(error).message.startsWith('Inactivity') ? 'inactivity' : 'timeout/error';
+            logger.warn(`Specialist skipped — ${reason}`, {
                 roleName: specialist.name,
-                backend: backend.id,
                 error: toError(error),
             });
-            return null;
+            timedOutSpecialists.push(specialist.name);
+            return { roleName: specialist.name, backend: backend.id, findings: [] };
         }
     }
 
@@ -857,22 +873,11 @@ export class CliAgentReviewScanner implements SecurityScanner {
 
         switch (backend.id) {
             case 'codex':
-                return this.runBackend(backend, prompt, cwd, {
+            case 'opencode':
+                return this.runBackend(backend, prompt, cwd, 60_000, 'readiness-probe', {
                     isReadinessProbe: true,
                     expectsJsonObject: true,
                 });
-            case 'opencode':
-                // opencode's LLM round-trip is too slow for a readiness probe
-                // (60 s timeout kills it before it finishes). Instead, just
-                // verify the binary is runnable and trust the user has API keys
-                // configured in their opencode config. Return the sentinel that
-                // checkBackendReady expects.
-                await this.execFileAsync(backend.config.binaryPath, ['--version'], {
-                    maxBuffer: 1024 * 1024,
-                    env: this.buildExecEnv(backend.id),
-                    timeout: 10000,
-                });
-                return '{"ready":true}';
             case 'gemini':
                 return this.runGeminiReadinessProbe(backend, cwd);
         }
@@ -907,35 +912,46 @@ export class CliAgentReviewScanner implements SecurityScanner {
         backend: { id: AgentBackendId; config: AgentBackendConfig },
         prompt: string,
         cwd: string,
+        hardCeilingMs: number,
+        label: string,
         options: BackendExecutionOptions = {},
     ): Promise<string> {
         const { binary, args } = this.buildBackendArgs(backend, prompt);
-        const env = this.buildExecEnv(backend.id);
 
-        // opencode exposes useful CLI activity as NDJSON events on stdout.
-        // Use spawn only in production so tests that inject execFn keep their
-        // deterministic command mocking.
-        if (backend.id === 'opencode' && options.onStderrLine && !this.execFn) {
-            return this.runBackendStreaming(binary, args, Object.assign(
-                { cwd, env, onStderrLine: options.onStderrLine },
-                options.isReadinessProbe ? { timeout: 60000 } : {},
-                { normalize: (stdout: string) => this.normalizeBackendOutput(backend.id, stdout, options) },
-            ));
+        // Readiness probes stay on the old execFile path — they run infrequently,
+        // have their own 60 s ceiling, and don't need inactivity tracking.
+        if (options.isReadinessProbe) {
+            try {
+                const { stdout } = await this.execFileAsync(binary, args, {
+                    cwd,
+                    maxBuffer: 20 * 1024 * 1024,
+                    env: this.buildExecEnv(backend.id),
+                    timeout: 60_000,
+                });
+                return this.normalizeBackendOutput(backend.id, stdout, options);
+            } catch (error) {
+                const diagnostics = this.classifyBackendFailure(backend.id, error as ExecLikeError);
+                logger.error('Agent backend readiness probe failed', {
+                    backend: backend.id,
+                    diagnostics,
+                    error: toError(error),
+                });
+                throw error;
+            }
         }
 
+        // Real backend calls use the streaming path so we can apply an inactivity
+        // timer in addition to the hard ceiling.
         try {
-            const { stdout } = await this.execFileAsync(binary, args, {
-                cwd,
-                maxBuffer: 20 * 1024 * 1024,
-                env,
-                timeout: options.isReadinessProbe ? 60000 : undefined,
-            });
-            return this.normalizeBackendOutput(backend.id, stdout, options);
+            const raw = await this.runBackendStreaming(
+                binary, args, cwd, this.buildExecEnv(backend.id), hardCeilingMs, label,
+            );
+            return this.normalizeBackendOutput(backend.id, raw, options);
         } catch (error) {
             const diagnostics = this.classifyBackendFailure(backend.id, error as ExecLikeError);
             logger.error('Agent backend execution failed', {
                 backend: backend.id,
-                isReadinessProbe: options.isReadinessProbe,
+                label,
                 diagnostics,
                 error: toError(error),
             });
@@ -944,188 +960,77 @@ export class CliAgentReviewScanner implements SecurityScanner {
     }
 
     /**
-     * Run a backend process with streaming output capture.
-     * Uses spawn instead of execFile so output can be forwarded in real-time.
-     * For opencode with --format json, stdout contains NDJSON events (one JSON
-     * per line) with types like:
-     *   - step_start:  a processing step began
-     *   - text:        text output from the model (part.text)
-     *   - tool_use:    tool invocation result (part.tool, part.state.title)
-     * These are converted to concise agent progress lines. The model response
-     * text is accumulated from text events and returned as the final result.
+     * Spawn `command args` and buffer stdout, resetting an inactivity timer on
+     * every chunk. Two independent timers protect against hung/runaway processes:
+     *
+     *  - Inactivity timer  — fires if no stdout arrives for `inactivityTimeoutMs`
+     *  - Hard ceiling      — fires unconditionally after `hardCeilingMs`
+     *
+     * Both timers are cleared in a `finally` block so nothing leaks.
+     * Resolves with the full buffered stdout on exit code 0; rejects otherwise.
      */
     private runBackendStreaming(
-        binary: string,
+        command: string,
         args: string[],
-        opts: {
-            cwd: string;
-            env: NodeJS.ProcessEnv;
-            timeout?: number;
-            onStderrLine: (line: string) => void;
-            normalize: (stdout: string) => string;
-        },
+        cwd: string,
+        env: NodeJS.ProcessEnv,
+        hardCeilingMs: number,
+        label: string,
     ): Promise<string> {
-        return new Promise((resolve, reject) => {
-            let stdoutBuffer = '';
-            const stderrChunks: string[] = [];
-            let timedOut = false;
-            let responseText = '';
-            let pendingLine = '';
-            let lastEmitted = '';
+        return new Promise<string>((resolve, reject) => {
+            const chunks: Buffer[] = [];
+            let hardTimer: ReturnType<typeof setTimeout> | undefined;
+            let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
 
-            const emitProgress = (line: string) => {
-                const clean = line
-                    .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
-                    .replace(/\s+/g, ' ')
-                    .trim();
-                if (!clean) {
-                    return;
-                }
-                // Only suppress exact consecutive duplicates (e.g. rapid flushes
-                // of the same stderr line). Repeated events with the same label
-                // but different positions in the stream (e.g. multiple step_start
-                // events) must all be forwarded so the terminal shows live activity.
-                if (clean === lastEmitted) {
-                    return;
-                }
-                lastEmitted = clean;
-                opts.onStderrLine(clean.length > 240 ? `${clean.slice(0, 237)}...` : clean);
+            const child = spawn(command, args, { cwd, env });
+
+            const resetInactivity = (): void => {
+                if (inactivityTimer !== undefined) clearTimeout(inactivityTimer);
+                inactivityTimer = setTimeout(() => {
+                    child.kill();
+                    reject(new Error(
+                        `Inactivity timeout: no output received for ${this.inactivityTimeoutMs}ms (${label})`,
+                    ));
+                }, this.inactivityTimeoutMs);
             };
 
-            const emitMultilineProgress = (value: string, options: { prefix?: string; maxLines?: number } = {}) => {
-                const lines = value.split(/\r?\n/).map(line => line.trimEnd()).filter(Boolean);
-                const maxLines = options.maxLines ?? 8;
-                for (const line of lines.slice(0, maxLines)) {
-                    emitProgress(options.prefix ? `${options.prefix}${line}` : line);
-                }
-                if (lines.length > maxLines) {
-                    emitProgress(`${options.prefix ?? ''}... ${lines.length - maxLines} more line(s)`);
-                }
-            };
+            hardTimer = setTimeout(() => {
+                child.kill();
+                reject(new Error(`Hard timeout: ${label} exceeded ${hardCeilingMs}ms`));
+            }, hardCeilingMs);
 
-            const handleStdoutLine = (line: string) => {
-                const trimmed = line.trim();
-                if (!trimmed) return;
+            // Start inactivity timer immediately — if the process never writes
+            // a single byte, the inactivity timer is the first to fire.
+            resetInactivity();
 
-                try {
-                    const event = JSON.parse(trimmed) as Record<string, any>;
-                    const part = event.part && typeof event.part === 'object'
-                        ? event.part as Record<string, any>
-                        : {};
-                    const type = String(event.type || part.type || '');
-
-                    if (type === 'text') {
-                        const text = typeof part.text === 'string' ? part.text : '';
-                        if (text) {
-                            responseText += text;
-                            emitMultilineProgress(text, { prefix: 'assistant: ', maxLines: 12 });
-                        }
-                        return;
-                    }
-
-                    if (type === 'tool_use' || type === 'tool' || type === 'tool-call') {
-                        const tool = String(part.tool || part.name || part.id || 'tool');
-                        const state = part.state && typeof part.state === 'object'
-                            ? part.state as Record<string, any>
-                            : {};
-                        const input = state.input && typeof state.input === 'object'
-                            ? state.input as Record<string, any>
-                            : {};
-                        const title = String(state.title || part.title || input.description || part.description || '').trim();
-                        const status = typeof state.status === 'string' ? state.status : '';
-                        const command = typeof input.command === 'string' ? input.command : '';
-                        const output = typeof state.output === 'string'
-                            ? state.output
-                            : typeof state.metadata?.output === 'string'
-                                ? state.metadata.output
-                                : '';
-
-                        emitProgress(title ? `${tool}: ${title}${status ? ` (${status})` : ''}` : `${tool}${status ? ` (${status})` : ''}`);
-                        if (command) {
-                            emitProgress(`$ ${command}`);
-                        }
-                        if (output) {
-                            emitMultilineProgress(output, { prefix: '  ', maxLines: 12 });
-                        }
-                        return;
-                    }
-
-                    if (type === 'step_start' || type === 'step-start') {
-                        emitProgress('opencode: thinking');
-                        return;
-                    }
-
-                    if (type === 'step_finish' || type === 'step-finish') {
-                        const total = part.tokens?.total;
-                        const reason = typeof part.reason === 'string' ? part.reason : 'complete';
-                        emitProgress(typeof total === 'number' ? `opencode: ${reason} (${total} tokens)` : `opencode: ${reason}`);
-                        return;
-                    }
-                } catch {
-                    emitProgress(trimmed);
-                }
-            };
-
-            const child = spawn(binary, args, {
-                cwd: opts.cwd,
-                env: opts.env,
-                stdio: ['ignore', 'pipe', 'pipe'],
+            child.stdout.on('data', (chunk: Buffer) => {
+                chunks.push(chunk);
+                resetInactivity();
             });
 
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            if (opts.timeout && opts.timeout > 0) {
-                timer = setTimeout(() => {
-                    timedOut = true;
-                    child.kill('SIGTERM');
-                }, opts.timeout);
-            }
-
-            child.stdout!.on('data', (data: Buffer) => {
-                const chunk = data.toString();
-                stdoutBuffer += chunk;
-                pendingLine += chunk;
-                const lines = pendingLine.split('\n');
-                pendingLine = lines.pop() ?? '';
-                lines.forEach(handleStdoutLine);
-            });
-
-            child.stderr!.on('data', (data: Buffer) => {
-                const chunk = data.toString();
-                stderrChunks.push(chunk);
-                const lines = chunk.split('\n').filter(Boolean);
-                for (const raw of lines) {
-                    emitProgress(raw);
-                }
-            });
-
-            const cleanup = () => {
-                if (timer) clearTimeout(timer);
-            };
-
-            child.on('close', (code) => {
-                cleanup();
-                if (pendingLine.trim()) {
-                    handleStdoutLine(pendingLine);
-                }
-                if (timedOut || code !== 0) {
-                    const stderr = stderrChunks.join('').trim();
-                    const err = new Error(
-                        timedOut
-                            ? `Process timed out after ${opts.timeout}ms`
-                            : `Process exited with code ${code}${stderr ? ': ' + stderr.slice(0, 200) : ''}`
-                    );
-                    (err as ExecLikeError).stdout = stdoutBuffer;
-                    (err as ExecLikeError).stderr = stderr;
-                    reject(err);
-                } else {
-                    resolve(opts.normalize(responseText || stdoutBuffer));
-                }
-            });
+            const stderrChunks: Buffer[] = [];
+            child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 
             child.on('error', (err) => {
-                cleanup();
                 reject(err);
             });
+
+            child.on('close', (code) => {
+                if (code === 0) {
+                    resolve(Buffer.concat(chunks).toString('utf8'));
+                } else {
+                    const stderr = Buffer.concat(stderrChunks).toString('utf8');
+                    reject(new Error(stderr || `Process exited with code ${code ?? 'null'}`));
+                }
+            });
+
+            // Always clean up both timers, even if the promise was already settled.
+            const cleanup = (): void => {
+                if (hardTimer !== undefined) clearTimeout(hardTimer);
+                if (inactivityTimer !== undefined) clearTimeout(inactivityTimer);
+            };
+            child.on('close', cleanup);
+            child.on('error', cleanup);
         });
     }
 
@@ -1158,7 +1063,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
             case 'opencode':
                 return {
                     binary: backend.config.binaryPath,
-                    args: ['run', '--format', 'json', builtPrompt],
+                    args: ['run', '--print-logs', '--format', 'json', builtPrompt],
                 };
         }
     }
@@ -1187,13 +1092,6 @@ export class CliAgentReviewScanner implements SecurityScanner {
             return trimmed;
         }
 
-        if (backend === 'opencode') {
-            const textOutput = this.extractOpencodeTextOutput(trimmed);
-            if (textOutput) {
-                return textOutput;
-            }
-        }
-
         if (backend === 'codex' && options.expectsJsonObject) {
             const jsonMatch = trimmed.match(/\{[\s\S]*\}$/);
             if (jsonMatch) {
@@ -1216,35 +1114,6 @@ export class CliAgentReviewScanner implements SecurityScanner {
         }
 
         return trimmed;
-    }
-
-    private extractOpencodeTextOutput(output: string): string | undefined {
-        const lines = output.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-        if (lines.length === 0) {
-            return undefined;
-        }
-
-        const textParts: string[] = [];
-        let parsedEventCount = 0;
-        for (const line of lines) {
-            try {
-                const event = JSON.parse(line) as { type?: unknown; part?: { type?: unknown; text?: unknown } };
-                const type = String(event.type || event.part?.type || '');
-                if (!type) {
-                    continue;
-                }
-                parsedEventCount += 1;
-                if (type === 'text' && typeof event.part?.text === 'string') {
-                    textParts.push(event.part.text);
-                }
-            } catch {
-                return undefined;
-            }
-        }
-
-        return parsedEventCount > 0 && textParts.length > 0
-            ? textParts.join('')
-            : undefined;
     }
 
     private extractJson(output: string): unknown {
@@ -1383,10 +1252,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         // and runtime state. Resolve them defensively before spawning any child
         // process so the binary can always find its auth files.
         const home = process.env.HOME || os.homedir();
-        
-        // Defensively build the PATH environment variable. Extension hosts on macOS
-        // may strip standard bin paths (like /usr/local/bin and /opt/homebrew/bin)
-        // when launched from a GUI/Launchpad.
+
         const defaultPaths = ['/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
         if (os.platform() === 'darwin') {
             defaultPaths.unshift('/opt/homebrew/bin');
@@ -1395,7 +1261,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         const pathSeparator = os.platform() === 'win32' ? ';' : ':';
         const combinedPaths = Array.from(new Set([
             ...currentPath.split(pathSeparator),
-            ...defaultPaths
+            ...defaultPaths,
         ])).filter(Boolean).join(pathSeparator);
 
         const env: NodeJS.ProcessEnv = {
@@ -1410,7 +1276,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
 
         if (backend === 'opencode') {
             env.XDG_CACHE_HOME = env.XDG_CACHE_HOME || path.join(home, '.cache');
-            env.XDG_DATA_HOME  = env.XDG_DATA_HOME  || path.join(home, '.local', 'share');
+            env.XDG_DATA_HOME = env.XDG_DATA_HOME || path.join(home, '.local', 'share');
         }
 
         return env;
@@ -1688,5 +1554,50 @@ export class CliAgentReviewScanner implements SecurityScanner {
 
     private slugify(value: string): string {
         return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+    }
+
+    /**
+     * Convert a raw specialist finding (pre-aggregation) directly to a SecurityIssue.
+     * Used for partial/fallback return paths where the aggregator was skipped or
+     * the total scan ceiling was hit before aggregation could run.
+     */
+    private toIssueFromRawFinding(
+        finding: SpecialistOutput['findings'][number] & { roleName: string; backend: string },
+    ): SecurityIssue {
+        return {
+            ruleId: `agent-review.${this.slugify(finding.title)}`,
+            title: finding.title,
+            description: `${finding.description}\n\nEvidence: ${finding.evidence}\nRemediation: ${finding.remediation}`,
+            severity: this.normalizeSeverity(finding.severity),
+            filePath: finding.filePath,
+            line: finding.line ?? 1,
+            source: `agent-review:${finding.roleName}`,
+            confidence: finding.confidence,
+            sourceType: 'agent-only',
+            groundedByDeterministicFindings: false,
+            verificationStatus: 'unverified',
+            backend: finding.backend as AgentBackendId,
+            sourceRoles: [finding.roleName],
+            relatedIssueIds: [],
+            degraded: true,
+        };
+    }
+
+    /**
+     * Build a consistent `scannerInfo` string for every return path in `scanWithContext`.
+     * Appends timed-out specialist names and an optional free-form note.
+     */
+    private buildScannerInfo(
+        backends: Array<{ id: AgentBackendId }>,
+        timedOutSpecialists: string[],
+        note?: string,
+    ): string {
+        const backendStr = backends.map(b => b.id).join(', ');
+        const parts = [`AI Agent Review (${backendStr})`];
+        if (timedOutSpecialists.length > 0) {
+            parts.push(`${timedOutSpecialists.length} specialists timed out: ${timedOutSpecialists.join(', ')}`);
+        }
+        if (note) parts.push(note);
+        return parts.join(' — ');
     }
 }

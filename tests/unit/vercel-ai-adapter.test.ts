@@ -90,6 +90,21 @@ describe('VercelAIAdapter', () => {
             expect(newConfig.provider).toBe('openai');
         });
     });
+
+    describe('NVIDIA NIM Auto-detection', () => {
+        it('should automatically configure base URL and default model when OpenAI provider gets an nvapi- key', () => {
+            const config: AIProviderConfig = {
+                provider: 'openai',
+                model: 'gpt-4o',
+                apiKey: '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',
+            };
+            const adapter = new VercelAIAdapter(config);
+            const resolvedConfig = adapter.getConfig();
+
+            expect(resolvedConfig.provider).toBe('openai');
+            expect(resolvedConfig.model).toBe('meta/llama-3.1-70b-instruct');
+        });
+    });
 });
 
 describe('createAIAdapter', () => {

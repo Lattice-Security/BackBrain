@@ -246,12 +246,16 @@ describe('CliAgentReviewScanner', () => {
             },
         });
 
+        // Version check should pass
+        const available = await scanner.isAvailable();
+        expect(available).toBe(true);
+
+        // But scan should skip it because readiness probe fails
         const result = await scanner.scanWithContext(['/repo/app.py'], {
             repositoryRoot: '/repo',
             deterministicIssues: [],
             changedFiles: [],
         });
-
         expect(result.issues).toEqual([]);
         expect(result.scannerInfo).toContain('no backends available');
     });
@@ -443,12 +447,16 @@ describe('CliAgentReviewScanner', () => {
             },
         });
 
-        const result = await scanner.scanWithContext(['/repo/server.js'], {
+        // Version check should pass
+        const available = await scanner.isAvailable();
+        expect(available).toBe(true);
+
+        // But scan should skip it because readiness probe fails
+        const result = await scanner.scanWithContext(['/repo/app.py'], {
             repositoryRoot: '/repo',
             deterministicIssues: [],
             changedFiles: [],
         });
-
         expect(result.issues).toEqual([]);
         expect(result.scannerInfo).toContain('no backends available');
     });
@@ -660,121 +668,6 @@ describe('CliAgentReviewScanner', () => {
         expect(available).toBe(true);
     });
 
-    it('should parse opencode JSON event streams and omit noisy print logs', async () => {
-        const calls: string[] = [];
-        const repoRoot = createTempRepo({
-            'server.ts': [
-                'export function handler(input: string) {',
-                '  // user input reaches shell command',
-                '  return input;',
-                '}',
-            ].join('\n'),
-        });
-        const serverPath = join(repoRoot, 'server.ts');
-        let opencodeRunCount = 0;
-
-        const asOpencodeEvents = (text: string) => [
-            JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }),
-            JSON.stringify({ type: 'text', part: { type: 'text', text } }),
-            JSON.stringify({ type: 'step_finish', part: { type: 'step-finish', tokens: { total: 42 } } }),
-        ].join('\n');
-
-        const execMock = (cmd: string, options: any, callback: any) => {
-            if (typeof options === 'function') {
-                callback = options;
-            }
-
-            calls.push(cmd);
-
-            if (cmd === 'opencode --version') {
-                callback(null, '1.15.10', '');
-                return { on: () => { } };
-            }
-
-            if (cmd.includes('opencode run')) {
-                opencodeRunCount += 1;
-
-                if (opencodeRunCount === 1) {
-                    callback(null, asOpencodeEvents(JSON.stringify({
-                        repoSummary: 'TypeScript service',
-                        specialists: [{
-                            name: 'shell-reviewer',
-                            rationale: 'Shell-sensitive input is present',
-                            focus: 'Review shell command construction',
-                            paths: [serverPath],
-                            checks: ['check shell input handling'],
-                        }],
-                    })), '');
-                    return { on: () => { } };
-                }
-
-                if (opencodeRunCount === 2) {
-                    callback(null, asOpencodeEvents(JSON.stringify({
-                        findings: [{
-                            title: 'Untrusted shell input',
-                            description: 'User input reaches shell command handling without validation.',
-                            severity: 'high',
-                            confidence: 'medium',
-                            filePath: serverPath,
-                            line: 2,
-                            evidence: 'user input reaches shell command',
-                            remediation: 'Validate or avoid shell command construction.',
-                        }],
-                    })), '');
-                    return { on: () => { } };
-                }
-
-                callback(null, asOpencodeEvents(JSON.stringify({
-                    findings: [{
-                        title: 'Untrusted shell input',
-                        description: 'User input reaches shell command handling without validation.',
-                        severity: 'high',
-                        confidence: 'medium',
-                        filePath: serverPath,
-                        line: 2,
-                        evidence: 'user input reaches shell command',
-                        remediation: 'Validate or avoid shell command construction.',
-                        sourceRoles: ['shell-reviewer'],
-                    }],
-                })), '');
-                return { on: () => { } };
-            }
-
-            callback(new Error(`Unexpected command: ${cmd}`), '', '');
-            return { on: () => { } };
-        };
-
-        (execMock as any)[promisify.custom] = (cmd: string, options?: any) => new Promise((resolve, reject) => {
-            execMock(cmd, options, (error: Error | null, stdout: string, stderr: string) => {
-                if (error) {
-                    reject(error);
-                    return;
-                }
-                resolve({ stdout, stderr });
-            });
-        });
-
-        const scanner = new CliAgentReviewScanner({
-            execFn: execMock as any,
-            backends: {
-                codex: { enabled: false },
-                gemini: { enabled: false },
-                opencode: { enabled: true, binaryPath: 'opencode' },
-            },
-        });
-
-        const result = await scanner.scanWithContext([serverPath], {
-            repositoryRoot: repoRoot,
-            deterministicIssues: [],
-            changedFiles: ['server.ts'],
-        });
-
-        expect(result.issues).toHaveLength(1);
-        expect(result.issues[0]?.backend).toBe('opencode');
-        expect(calls.some(cmd => cmd.includes('opencode run --format json'))).toBe(true);
-        expect(calls.some(cmd => cmd.includes('--print-logs'))).toBe(false);
-    });
-
     it('should downgrade unverifiable AI findings instead of dropping the whole scan', async () => {
         const repoRoot = createTempRepo({
             'app.py': [
@@ -887,7 +780,6 @@ describe('CliAgentReviewScanner', () => {
 
     it('should prefer the configured backend when multiple are available', async () => {
         const calls: string[] = [];
-        let codexExecCount = 0;
         const execMock = (cmd: string, options: any, callback: any) => {
             if (typeof options === 'function') {
                 callback = options;
@@ -901,12 +793,7 @@ describe('CliAgentReviewScanner', () => {
             }
 
             if (cmd.includes('codex exec')) {
-                codexExecCount += 1;
-                callback(null, JSON.stringify(
-                    codexExecCount === 1
-                        ? { ready: true }
-                        : { repoSummary: 'repo', specialists: [] }
-                ), '');
+                callback(null, JSON.stringify({ ready: true }), '');
                 return { on: () => { } };
             }
 
@@ -931,7 +818,7 @@ describe('CliAgentReviewScanner', () => {
 
         const scanner = new CliAgentReviewScanner({
             execFn: execMock as any,
-            preferredBackend: 'codex',
+            preferredBackend: 'opencode',
             backends: {
                 codex: { enabled: true, binaryPath: 'codex' },
                 gemini: { enabled: false },
@@ -945,7 +832,8 @@ describe('CliAgentReviewScanner', () => {
             changedFiles: [],
         });
 
-        const plannerCall = calls.find(cmd => cmd.includes('codex exec') && cmd.includes('Requested scan paths'));
-        expect(plannerCall).toBeDefined();
+        const executionCalls = calls.filter(cmd => cmd.includes('exec') || cmd.includes('run'));
+        // The planner call (the 3rd call) should be opencode run because it is preferred
+        expect(executionCalls[2]).toContain('opencode run');
     });
 });

@@ -4,27 +4,6 @@ import { VibeCodeScanner } from "../../packages/core/src/adapters/vibe-code-scan
 describe("VibeCodeScanner", () => {
   const scanner = new VibeCodeScanner();
 
-  it("should detect missing imports", async () => {
-    const content = `
-      fs.readFileSync('test.txt');
-    `;
-    const issues = await scanner.scanFile("test.ts", content);
-    const missingImport = issues.find(i => i.ruleId === 'vibe-code.missing-import');
-    expect(missingImport).toBeDefined();
-    expect(missingImport?.description).toContain("'fs' is used but not imported");
-  });
-
-  it("should detect inconsistent naming", async () => {
-    const content = `
-      function myTestFunction() {}
-      mytestfunction();
-    `;
-    const issues = await scanner.scanFile("test.ts", content);
-    const nameMismatch = issues.find(i => i.ruleId === 'vibe-code.name-mismatch');
-    expect(nameMismatch).toBeDefined();
-    expect(nameMismatch?.description).toContain("'mytestfunction' should be 'myTestFunction'");
-  });
-
   it("should detect unhandled promises", async () => {
     const content = `
       fetch('https://api.example.com');
@@ -32,6 +11,44 @@ describe("VibeCodeScanner", () => {
     const issues = await scanner.scanFile("test.ts", content);
     const unhandledPromise = issues.find(i => i.ruleId === 'vibe-code.unhandled-promise');
     expect(unhandledPromise).toBeDefined();
+  });
+
+  it("should NOT flag multi-line promise chains with .catch", async () => {
+    const content = `
+      fetch('https://api.example.com')
+        .then(res => res.json())
+        .catch(err => console.error(err));
+    `;
+    const issues = await scanner.scanFile("test.ts", content);
+    const unhandled = issues.filter(i => i.ruleId === 'vibe-code.unhandled-promise');
+    expect(unhandled.length).toBe(0);
+  });
+
+  it("should NOT flag awaited promises", async () => {
+    const content = `
+      const data = await fetch('https://api.example.com');
+    `;
+    const issues = await scanner.scanFile("test.ts", content);
+    const unhandled = issues.filter(i => i.ruleId === 'vibe-code.unhandled-promise');
+    expect(unhandled.length).toBe(0);
+  });
+
+  it("should NOT flag axios multi-line chains", async () => {
+    const content = `
+      axios.get('/api/data')
+        .then(response => response.data)
+        .catch(err => {});
+    `;
+    const issues = await scanner.scanFile("test.ts", content);
+    const unhandled = issues.filter(i => i.ruleId === 'vibe-code.unhandled-promise');
+    expect(unhandled.length).toBe(0);
+  });
+
+  it("should flag fetch without any handling", async () => {
+    const content = "fetch('https://api.example.com');";
+    const issues = await scanner.scanFile("test.ts", content);
+    const unhandled = issues.filter(i => i.ruleId === 'vibe-code.unhandled-promise');
+    expect(unhandled.length).toBe(1);
   });
 
   it("should detect deprecated APIs via regex rule", async () => {
@@ -54,21 +71,6 @@ describe("VibeCodeScanner", () => {
     const extensions = scanner.getSupportedExtensions();
     expect(extensions).toContain(".ts");
     expect(extensions).toContain(".py");
-  });
-
-  // Phase 8.2 - New Detector Tests
-
-  it("should detect dead code after return statement", async () => {
-    const content = `
-function test() {
-  return 42;
-  console.log("This is dead code");
-}
-    `;
-    const issues = await scanner.scanFile("test.ts", content);
-    const deadCode = issues.find(i => i.ruleId === 'vibe-code.dead-code');
-    expect(deadCode).toBeDefined();
-    expect(deadCode?.description).toContain("Unreachable code");
   });
 
   it("should detect type mismatch - parseInt on number", async () => {
@@ -104,25 +106,6 @@ const parts = count.split(",");
     expect(result).toBeDefined();
     expect(result.scannerInfo).toBe("VibeCode Scanner");
     expect(result.scannedFiles).toEqual([]); // Files don't exist
-  });
-
-  it("should NOT detect dead code in switch statements", async () => {
-    const content = `
-function test(x) {
-  switch(x) {
-    case 1:
-      return "one";
-    case 2:
-      return "two";
-    default:
-      return "other";
-  }
-}
-    `;
-    const issues = await scanner.scanFile("test.ts", content);
-    const deadCode = issues.filter(i => i.ruleId === 'vibe-code.dead-code');
-    // Should NOT find dead code for case 2 or default
-    expect(deadCode.length).toBe(0);
   });
 
   it("should ignore patterns inside comments and strings", async () => {

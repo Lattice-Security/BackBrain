@@ -61,16 +61,33 @@ export class VercelAIAdapter implements AIProvider {
             return;
         }
 
+        let resolvedBaseUrl = this.config.baseUrl;
+        let resolvedModel = this.config.model;
+
+        // Auto-detect NVIDIA NIM API key and configure it automatically
+        if ((this.config.provider === 'openai' || this.config.provider === 'nvidia') && apiKey.startsWith('nvapi-')) {
+            resolvedBaseUrl = 'https://integrate.api.nvidia.com/v1';
+            if (this.config.model === 'gpt-4o' || !this.config.model || this.config.provider === 'nvidia') {
+                resolvedModel = 'deepseek-ai/deepseek-v4-flash';
+                this.config.model = resolvedModel;
+            }
+            logger.info('Auto-detected NVIDIA NIM API key.', {
+                baseUrl: resolvedBaseUrl,
+                model: resolvedModel
+            });
+        }
+
         // Build settings object, only including baseURL if defined
-        const baseSettings = { apiKey };
-        const settings = this.config.baseUrl
-            ? { ...baseSettings, baseURL: this.config.baseUrl }
+        const baseSettings: Record<string, unknown> = { apiKey };
+        const settings = resolvedBaseUrl
+            ? { ...baseSettings, baseURL: resolvedBaseUrl, compatibility: 'compatible' as const }
             : baseSettings;
 
         try {
             switch (this.config.provider) {
                 case 'openai':
                 case 'openrouter':
+                case 'nvidia':
                     this.providerFactory = createOpenAI(settings);
                     break;
                 case 'anthropic':
@@ -157,9 +174,9 @@ export class VercelAIAdapter implements AIProvider {
 
             if (result.usage) {
                 response.usage = {
-                    promptTokens: result.usage.promptTokens,
-                    completionTokens: result.usage.completionTokens,
-                    totalTokens: result.usage.totalTokens,
+                    promptTokens: result.usage.inputTokens ?? 0,
+                    completionTokens: result.usage.outputTokens ?? 0,
+                    totalTokens: result.usage.totalTokens ?? 0,
                 };
             }
 

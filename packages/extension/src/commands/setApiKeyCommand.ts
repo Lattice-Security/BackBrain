@@ -17,6 +17,7 @@ const PROVIDERS: { label: string; id: SupportedProvider }[] = [
     { label: 'Google Gemini', id: 'google' },
     { label: 'xAI (Grok)', id: 'xai' },
     { label: 'DeepSeek', id: 'deepseek' },
+    { label: 'NVIDIA NIM', id: 'nvidia' },
     { label: 'OpenRouter', id: 'openrouter' },
 ];
 
