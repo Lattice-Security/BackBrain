@@ -27,7 +27,6 @@ import { initializeAIKeyService } from './services/ai-key-service';
 import { initializeFixHistoryService } from './services/fix-history-service';
 import { registerFixPreviewProvider } from './services/fix-preview-provider';
 import { GeminiCliInstaller } from './utils/gemini-cli-installer';
-import { isRecentlyNavigated } from './utils/navigation-cooldown';
 import { loadTreeSitterGrammars } from './services/tree-sitter-grammar-loader';
 
 const logger = createLogger('Extension');
@@ -501,74 +500,6 @@ export async function activate(context: vscode.ExtensionContext) {
       const msg = 'BackBrain: Severity Panel failed to initialize. Security issues will not be visible in the sidebar.';
       logger.error(msg);
       vscode.window.showErrorMessage(msg);
-    }
-
-    // 3. Register Scanning Triggers
-    const autoScanEnabled = config.get<boolean>('autoScan', true);
-    const scanOnSaveEnabled = config.get<boolean>('scanOnSave', true);
-
-    // Map to track debounce timers per file
-    const debounceTimers = new Map<string, NodeJS.Timeout>();
-
-    // Helper to trigger file scan
-    const triggerFileScan = async (document: vscode.TextDocument, delay: number = 0) => {
-      if (document.uri.scheme !== 'file') return;
-      if (!autoScanEnabled) return;
-      if (isRecentlyNavigated(document.uri.fsPath)) return;
-
-      const filePath = document.uri.fsPath;
-
-      // Clear existing timer if any
-      if (debounceTimers.has(filePath)) {
-        clearTimeout(debounceTimers.get(filePath));
-      }
-
-      if (delay > 0) {
-        const timer = setTimeout(() => {
-          debounceTimers.delete(filePath);
-          vscode.commands.executeCommand('backbrain.scanFile', document.uri, { quiet: true });
-        }, delay);
-        debounceTimers.set(filePath, timer);
-      } else {
-        vscode.commands.executeCommand('backbrain.scanFile', document.uri, { quiet: true });
-      }
-    };
-
-
-    // Trigger workspace scan on startup if enabled
-    const scanOnStartup = config.get<boolean>('scanOnStartup', true);
-
-    if (autoScanEnabled && scanOnStartup) {
-      logger.info('Auto-scan on startup is enabled, triggering workspace scan...');
-      setTimeout(() => {
-        if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-          vscode.commands.executeCommand('backbrain.scanWorkspace');
-        }
-      }, 3000); // Slightly longer delay to ensure everything is initialized
-    } else {
-      logger.info('Auto-scan on startup is disabled or restricted');
-    }
-
-    // Scan on file open
-    context.subscriptions.push(
-      vscode.workspace.onDidOpenTextDocument((doc) => {
-        // Prioritize: Scan immediately on open
-        triggerFileScan(doc, 0);
-      })
-    );
-
-    // Scan on file save
-    context.subscriptions.push(
-      vscode.workspace.onDidSaveTextDocument((doc) => {
-        if (!scanOnSaveEnabled) return;
-        // Debounce on save to handle rapid saves
-        triggerFileScan(doc, 1000);
-      })
-    );
-
-    // Scan valid active text editor immediately if exists
-    if (vscode.window.activeTextEditor) {
-      triggerFileScan(vscode.window.activeTextEditor.document);
     }
 
     logger.info('BackBrain extension activated successfully');
