@@ -251,6 +251,9 @@ export async function activate(context: vscode.ExtensionContext) {
       modelOverrides: Object.fromEntries(
         Object.entries(agentModelOverrides).map(([key, value]) => [key, Boolean(value)])
       ),
+      variantOverrides: Object.fromEntries(
+        Object.entries(agentVariantOverrides).map(([key, value]) => [key, Boolean(value)])
+      ),
     });
 
     // Register scanners automatically from core
