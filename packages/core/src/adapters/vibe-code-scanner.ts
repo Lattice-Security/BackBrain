@@ -44,7 +44,21 @@ export class VibeCodeScanner implements SecurityScanner {
 
   async scanFile(filePath: string, content: string): Promise<SecurityIssue[]> {
     const issues: SecurityIssue[] = [];
+
+    // Skip TypeScript declaration files — they contain type-only code
+    // that triggers false positives in all detectors.
+    if (/\.d\.(ts|tsx|mts|cts)$/.test(filePath)) {
+      return issues;
+    }
+
     const lines = content.split('\n');
+
+    // Strip comments from content so JSDoc code examples are not
+    // parsed as real code by type-mismatch and unhandled-promise detectors.
+    const cleanContent = content
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    const cleanLines = cleanContent.split('\n');
 
     // Run regex-based rules from vibe-rules.ts
     for (const rule of this.rules) {
@@ -54,8 +68,8 @@ export class VibeCodeScanner implements SecurityScanner {
     }
 
     // Run built-in detectors
-    issues.push(...this.detectUnhandledPromises(filePath, lines));
-    issues.push(...this.detectTypeMismatches(filePath, lines));
+    issues.push(...this.detectUnhandledPromises(filePath, cleanLines));
+    issues.push(...this.detectTypeMismatches(filePath, cleanLines));
     issues.push(...await this.detectHallucinatedDeps(filePath, content));
 
     return issues.filter(i => i.confidence === 'high');

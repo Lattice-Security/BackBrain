@@ -978,12 +978,24 @@ export class CliAgentReviewScanner implements SecurityScanner {
         hardCeilingMs: number,
         label: string,
     ): Promise<string> {
+        // Whitelist of allowed commands to prevent command injection
+        const allowedCommands = ['git', 'node', 'npm', 'npx', 'python', 'python3', 'bash', 'sh'];
+        if (!allowedCommands.includes(command)) {
+            throw new Error(`Command '${command}' is not allowed`);
+        }
+        // Sanitize args to prevent injection (only allow alphanumeric, dash, underscore, dot, slash)
+        const sanitizedArgs = args.map(arg => {
+            if (/^[a-zA-Z0-9_\-\.\/]+$/.test(arg)) {
+                return arg;
+            }
+            throw new Error(`Invalid argument: ${arg}`);
+        });
         return new Promise<string>((resolve, reject) => {
             const chunks: Buffer[] = [];
             let hardTimer: ReturnType<typeof setTimeout> | undefined;
             let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
 
-            const child = spawn(command, args, { cwd, env });
+            const child = spawn(command, sanitizedArgs, { cwd, env });
 
             const resetInactivity = (): void => {
                 if (inactivityTimer !== undefined) clearTimeout(inactivityTimer);
