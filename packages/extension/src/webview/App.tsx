@@ -127,6 +127,8 @@ const phaseProgress: Record<string, number> = {
     'agent-aggregator': 90,
     'agent-verification': 95,
     complete: 100,
+    degraded: 100,
+    skipped: 100,
 };
 
 const phaseIndex: Record<string, number> = {
@@ -136,6 +138,8 @@ const phaseIndex: Record<string, number> = {
     'agent-aggregator': 3,
     'agent-verification': 3,
     complete: 4,
+    degraded: 4,
+    skipped: 4,
 };
 
 const defaultConfiguration: ConfigurationState = {
