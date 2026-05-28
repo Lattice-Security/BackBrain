@@ -356,7 +356,12 @@ const App = () => {
                         });
                     }
                     if (message.phase === 'agent-specialists' && message.agents && message.agents.length > 0) {
-                        setLastScanSpecialists(message.agents.map(name => ({ name, focus: '' })));
+                        setLastScanSpecialists(message.agents.map(name => ({
+                            name,
+                            focus: '',
+                            backend: message.backend || '',
+                            status: 'running',
+                        })));
                     }
                     if (message.phase === 'degraded' || message.phase === 'complete') {
                         setScanIncomplete(message.phase === 'degraded');
@@ -1097,6 +1102,11 @@ const App = () => {
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
                                                             <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--bb-color-success)', flexShrink: 0 }} />
                                                             <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--bb-color-foreground)' }}>{specName}</span>
+                                                            {spec.backend && (
+                                                                <span style={{ fontSize: '9px', padding: '1px 4px', borderRadius: '3px', background: 'var(--bb-color-panel-strong)', color: 'var(--bb-color-muted)' }}>
+                                                                    {spec.backend}
+                                                                </span>
+                                                            )}
                                                         </div>
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                             <span style={{
@@ -1122,7 +1132,7 @@ const App = () => {
                                                     {isExpanded && (
                                                         <div style={{ padding: '8px 10px', borderTop: '0.5px solid var(--bb-color-border)', background: 'var(--bb-color-panel)' }}>
                                                             <div style={{ fontSize: '10px', color: 'var(--bb-color-muted)', marginBottom: '6px' }}>
-                                                                Backend: {configuration.agentBackends.find(b => b.enabled)?.label || 'Gemini'}
+                                                                Backend: {spec.backend || configuration.agentBackends.find(b => b.enabled)?.label || 'Gemini'}
                                                             </div>
                                                             {specFindings.length === 0 ? (
                                                                 <div style={{ fontSize: '11px', color: 'var(--bb-color-muted)', fontStyle: 'italic', padding: '4px 0' }}>

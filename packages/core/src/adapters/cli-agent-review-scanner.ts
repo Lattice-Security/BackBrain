@@ -388,6 +388,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
             level: 'info',
             message: `Running ${specialists.length} AI specialist review(s).`,
             backend: leadBackend.id,
+            agents: specialists.map(s => s.name),
         });
 
         const timedOutSpecialists: string[] = [];
