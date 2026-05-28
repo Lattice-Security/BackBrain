@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, MouseEvent } from 'react';
+import { useEffect, useState, useRef, useMemo, MouseEvent } from 'react';
 import { vscode } from '../messages';
 import type { FileEdge, FileNode, WorkflowConnection, WorkflowStep, IssueData } from '../messages';
 import './Visualizer.css';
@@ -215,8 +215,8 @@ export function Visualizer({ issues }: VisualizerProps) {
         dragStartRef.current = { x: e.clientX, y: e.clientY };
     };
 
-    // Calculate nice bezier edge path
-    const getEdgePath = (sourceId: string, targetId: string) => {
+    // Calculate direction-aware bezier edge path exiting from node borders
+    const getEdgePath = (sourceId: string, targetId: string): string => {
         let sourceNode: any, targetNode: any;
         if (graphType === 'files') {
             sourceNode = fileNodes.find(n => n.id === sourceId);
@@ -225,28 +225,54 @@ export function Visualizer({ issues }: VisualizerProps) {
             sourceNode = workflowSteps.find(s => s.id === sourceId);
             targetNode = workflowSteps.find(s => s.id === targetId);
         }
-
         if (!sourceNode || !targetNode) return '';
 
         const sPos = sourceNode.position || { x: 0, y: 0 };
         const tPos = targetNode.position || { x: 0, y: 0 };
 
-        const sX = sPos.x + NODE_WIDTH / 2;
-        const sY = sPos.y + NODE_HEIGHT / 2;
-        const tX = tPos.x + NODE_WIDTH / 2;
-        const tY = tPos.y + NODE_HEIGHT / 2;
+        const sCX = sPos.x + NODE_WIDTH / 2;
+        const sCY = sPos.y + NODE_HEIGHT / 2;
+        const tCX = tPos.x + NODE_WIDTH / 2;
+        const tCY = tPos.y + NODE_HEIGHT / 2;
 
-        // Curved link path calculation
-        const dx = Math.abs(tX - sX) * 0.5;
-        const controlX1 = sX + (tX > sX ? dx : -dx);
-        const controlY1 = sY;
-        const controlX2 = tX - (tX > sX ? dx : -dx);
-        const controlY2 = tY;
+        const dx = tCX - sCX;
+        const dy = tCY - sCY;
+        const horizontal = Math.abs(dx) >= Math.abs(dy);
 
-        return `M ${sX} ${sY} C ${controlX1} ${controlY1}, ${controlX2} ${controlY2}, ${tX} ${tY}`;
+        let sX: number, sY: number, tX: number, tY: number;
+        if (horizontal) {
+            sX = dx > 0 ? sPos.x + NODE_WIDTH : sPos.x;
+            sY = sCY;
+            tX = dx > 0 ? tPos.x : tPos.x + NODE_WIDTH;
+            tY = tCY;
+        } else {
+            sX = sCX;
+            sY = dy > 0 ? sPos.y + NODE_HEIGHT : sPos.y;
+            tX = tCX;
+            tY = dy > 0 ? tPos.y : tPos.y + NODE_HEIGHT;
+        }
+
+        const bend = horizontal
+            ? Math.abs(tX - sX) * 0.45
+            : Math.abs(tY - sY) * 0.45;
+
+        const c1x = horizontal ? sX + (dx > 0 ? bend : -bend) : sX;
+        const c1y = horizontal ? sY : sY + (dy > 0 ? bend : -bend);
+        const c2x = horizontal ? tX - (dx > 0 ? bend : -bend) : tX;
+        const c2y = horizontal ? tY : tY - (dy > 0 ? bend : -bend);
+
+        return `M ${sX} ${sY} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tX} ${tY}`;
     };
 
     const selectedDetails = getSelectedNodeDetails();
+    const connectedEdgeIds = useMemo(() => {
+        if (!selectedNodeId) return new Set<string>();
+        return new Set(
+            fileEdges
+                .filter(e => e.source === selectedNodeId || e.target === selectedNodeId)
+                .map(e => e.id)
+        );
+    }, [selectedNodeId, fileEdges]);
 
     return (
         <div className={`bb-visualizer-container${isFullscreen ? ' bb-visualizer-container--fullscreen' : ''}`}>
@@ -317,7 +343,17 @@ export function Visualizer({ issues }: VisualizerProps) {
                                 refY="3" 
                                 orient="auto"
                             >
-                                <polygon points="0 0, 8 3, 0 6" fill="var(--bb-color-border)" />
+                                <polygon points="0 0, 8 3, 0 6" fill="var(--bb-color-subtle, #666)" />
+                            </marker>
+                            <marker 
+                                id="arrowhead-active" 
+                                markerWidth="10" 
+                                markerHeight="6" 
+                                refX="8" 
+                                refY="3" 
+                                orient="auto"
+                            >
+                                <polygon points="0 0, 8 3, 0 6" fill="var(--bb-color-link)" />
                             </marker>
                         </defs>
                         <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
@@ -326,7 +362,11 @@ export function Visualizer({ issues }: VisualizerProps) {
                                     <path 
                                         key={edge.id}
                                         d={getEdgePath(edge.source, edge.target)}
-                                        className="bb-vis-edge-line"
+                                        className={`bb-vis-edge-line${
+                                            connectedEdgeIds.has(edge.id) ? ' bb-vis-edge-line--active' :
+                                            selectedNodeId ? ' bb-vis-edge-line--dimmed' : ''
+                                        }`}
+                                        markerEnd={connectedEdgeIds.has(edge.id) ? 'url(#arrowhead-active)' : 'url(#arrowhead)'}
                                     >
                                         {edge.label && <title>{edge.label}</title>}
                                     </path>

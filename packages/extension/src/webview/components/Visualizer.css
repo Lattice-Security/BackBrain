@@ -84,10 +84,10 @@
 /* Edges styling */
 .bb-vis-edge-line {
     fill: none;
-    stroke: var(--bb-color-border);
+    stroke: var(--bb-color-subtle, #666);
     stroke-width: 1.5;
     marker-end: url(#arrowhead);
-    transition: stroke var(--bb-transition-normal);
+    transition: stroke var(--bb-transition-normal), opacity var(--bb-transition-normal);
 }
 
 .bb-vis-edge-line--logical {
@@ -99,6 +99,16 @@
     stroke: var(--bb-color-error);
     stroke-width: 2;
     stroke-dasharray: 5 4;
+}
+
+.bb-vis-edge-line--active {
+    stroke: var(--bb-color-link);
+    stroke-width: 2;
+    opacity: 1;
+}
+
+.bb-vis-edge-line--dimmed {
+    opacity: 0.15;
 }
 
 .bb-vis-edge-text {
