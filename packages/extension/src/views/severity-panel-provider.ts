@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { createLogger, ScanResultStore, type SecurityScanStatusUpdate, type SecurityService } from '@backbrain/core';
+import { createLogger, ScanResultStore, providerRegistry, type SecurityScanStatusUpdate, type SecurityService } from '@backbrain/core';
 import {
     type AgentBackendId,
     type AgentScanDepth,
@@ -435,6 +435,10 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                         this._debugSteps = [];
                         this._debugPhase = '';
                     }
+                    break;
+
+                case 'requestGraphData':
+                    await this._handleGraphDataRequest(message.paths);
                     break;
             }
         });
@@ -1075,6 +1079,50 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private async _handleRevertFix(sessionId: string): Promise<void> {
         logger.info('Reverting fix session', { sessionId });
         await vscode.commands.executeCommand('backbrain.revertFix', sessionId);
+    }
+
+    /**
+     * Handle graph data request from Visualizer tab
+     */
+    private async _handleGraphDataRequest(paths?: string[]): Promise<void> {
+        try {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders || workspaceFolders.length === 0) {
+                this._postMessage({ type: 'graphData', status: 'error', error: 'No workspace folder open' });
+                return;
+            }
+
+            const rootPath = workspaceFolders[0]!.uri.fsPath;
+
+            // If no paths provided, scan all files in workspace
+            let scanPaths = paths;
+            if (!scanPaths || scanPaths.length === 0) {
+                const files = await vscode.workspace.findFiles('**/*.{ts,tsx,js,jsx}', '**/node_modules/**');
+                scanPaths = files.map(f => f.fsPath);
+            }
+
+            // Import VisualizerService from core
+            const { VisualizerService } = await import('@backbrain/core');
+            const { NodeFilesystem } = await import('@backbrain/core');
+            const fsImpl = new NodeFilesystem();
+            providerRegistry.registerFilesystem('node-fs', fsImpl, true);
+
+            const service = new VisualizerService();
+            const fileGraph = await service.generateFileGraph(scanPaths, fsImpl, rootPath);
+
+            // Generate workflow graph (simplified — uses deterministic analysis)
+            const workflowGraph = await service.generateWorkflowGraph(scanPaths, fsImpl, [], undefined);
+
+            this._postMessage({
+                type: 'graphData',
+                fileGraph,
+                workflowGraph,
+                status: 'ready',
+            });
+        } catch (error) {
+            logger.error('Failed to generate graph data', { error });
+            this._postMessage({ type: 'graphData', status: 'error', error: String(error) });
+        }
     }
 
     /**
