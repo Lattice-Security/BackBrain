@@ -62,16 +62,15 @@ const EXCLUDED_DIRECTORIES = new Set([
 export async function scanCommand(args: ScanArgs): Promise<number> {
     const root = path.resolve(args.dir);
 
-    if (args.verbose) {
-        configureLogger(LOG_LEVELS.DEBUG);
-    }
-
     const store = new ScanResultStore(root);
     const logFile = new FileLogOutput(path.join(store.basePath, 'scan-log.jsonl'));
 
     if (args.json) {
         // In JSON mode, suppress console logging — only write to file
         configureLogger(args.verbose ? LOG_LEVELS.DEBUG : LOG_LEVELS.INFO, [logFile.handler]);
+    } else if (args.verbose) {
+        configureLogger(LOG_LEVELS.DEBUG);
+        addLoggerOutput(logFile.handler);
     } else {
         addLoggerOutput(logFile.handler);
     }

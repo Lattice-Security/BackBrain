@@ -129,12 +129,11 @@ export function addLoggerOutput(output: LogOutput): void {
  * Create a logger with a namespace prefix
  */
 export function createLogger(namespace: string): Logger {
-    const baseLogger = getLogger();
     return {
-        error: (msg, ctx) => baseLogger.error(`[${namespace}] ${msg}`, ctx),
-        warn: (msg, ctx) => baseLogger.warn(`[${namespace}] ${msg}`, ctx),
-        info: (msg, ctx) => baseLogger.info(`[${namespace}] ${msg}`, ctx),
-        debug: (msg, ctx) => baseLogger.debug(`[${namespace}] ${msg}`, ctx),
-        verbose: (msg, ctx) => baseLogger.verbose(`[${namespace}] ${msg}`, ctx),
+        error: (msg, ctx) => getLogger().error(`[${namespace}] ${msg}`, ctx),
+        warn: (msg, ctx) => getLogger().warn(`[${namespace}] ${msg}`, ctx),
+        info: (msg, ctx) => getLogger().info(`[${namespace}] ${msg}`, ctx),
+        debug: (msg, ctx) => getLogger().debug(`[${namespace}] ${msg}`, ctx),
+        verbose: (msg, ctx) => getLogger().verbose(`[${namespace}] ${msg}`, ctx),
     };
 }
