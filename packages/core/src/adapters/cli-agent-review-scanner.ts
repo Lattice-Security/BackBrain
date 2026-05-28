@@ -679,7 +679,8 @@ export class CliAgentReviewScanner implements SecurityScanner {
         for (const finding of findings) {
             const resolvedPath = path.isAbsolute(finding.filePath)
                 ? finding.filePath
-                : path.join(repositoryRoot, finding.filePath);
+                : path.resolve(repositoryRoot, finding.filePath);
+
             const verification = await this.verifyFindingLocation(resolvedPath, finding.line, finding.evidence);
             if (verification.status === 'drop') {
                 continue;

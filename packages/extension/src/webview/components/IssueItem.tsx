@@ -39,6 +39,7 @@ interface IssueItemProps {
 
 export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanation, onClearActiveFix }) => {
     const [expanded, setExpanded] = useState(false);
+    const [explanationCollapsed, setExplanationCollapsed] = useState(false);
 
     const handleCardClick = () => {
         vscode.postMessage({
@@ -170,19 +171,30 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
                 <div className="issue-explanation" onClick={e => e.stopPropagation()}>
                     <div className="issue-explanation__header">
                         <span>AI Explanation</span>
-                        {explanation?.provider && (
-                            <span className="issue-explanation__provider">{explanation.provider}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            {explanation?.provider && (
+                                <span className="issue-explanation__provider">{explanation.provider}</span>
+                            )}
+                            <button
+                                className="issue-explanation__toggle"
+                                onClick={() => setExplanationCollapsed(c => !c)}
+                                title={explanationCollapsed ? 'Expand explanation' : 'Collapse explanation'}
+                            >
+                                {explanationCollapsed ? '+' : '−'}
+                            </button>
+                        </div>
+                    </div>
+                    <div className={`issue-explanation__body${explanationCollapsed ? ' issue-explanation__body--collapsed' : ''}`}>
+                        {explanation?.loading && (
+                            <div className="issue-explanation__status">Generating explanation...</div>
+                        )}
+                        {explanation?.error && (
+                            <div className="issue-explanation__error">{explanation.error}</div>
+                        )}
+                        {explanation?.content && (
+                            <div className="issue-explanation__content">{explanation.content}</div>
                         )}
                     </div>
-                    {explanation?.loading && (
-                        <div className="issue-explanation__status">Generating explanation...</div>
-                    )}
-                    {explanation?.error && (
-                        <div className="issue-explanation__error">{explanation.error}</div>
-                    )}
-                    {explanation?.content && (
-                        <div className="issue-explanation__content">{explanation.content}</div>
-                    )}
                 </div>
             )}
         </div>

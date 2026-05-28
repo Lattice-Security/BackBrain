@@ -283,3 +283,40 @@
 .issue-explanation__content {
     color: var(--bb-color-foreground);
 }
+
+.issue-explanation__toggle {
+    background: none;
+    border: 1px solid var(--bb-color-border);
+    border-radius: 3px;
+    color: var(--bb-color-muted);
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    padding: 0 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+}
+
+.issue-explanation__toggle:hover {
+    color: var(--bb-color-foreground);
+    border-color: var(--bb-color-foreground);
+}
+
+.issue-explanation__body {
+    overflow: hidden;
+    transition: max-height 0.2s ease, opacity 0.2s ease;
+    max-height: 2000px;
+    opacity: 1;
+}
+
+.issue-explanation__body--collapsed {
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+}
