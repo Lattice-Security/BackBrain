@@ -54,8 +54,7 @@ export function Visualizer({ issues }: VisualizerProps) {
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const [filesLayout, setFilesLayout] = useState<'module' | 'tree' | 'graph'>('module');
     const [showExternals, setShowExternals] = useState(true);
-    const [expandedModules, setExpandedModules] = useState<Set<string>>(new Set());
-    const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+    const [expandedBranchIds, setExpandedBranchIds] = useState<Set<string>>(new Set());
     const [treeSearchQuery, setTreeSearchQuery] = useState('');
 
     const viewportRef = useRef<HTMLDivElement>(null);
@@ -66,6 +65,29 @@ export function Visualizer({ issues }: VisualizerProps) {
     // Node width/height constants for midpoint calculation
     const NODE_WIDTH = 150;
     const NODE_HEIGHT = 62;
+    const NODE_V_SPACING = 90;
+    const NODE_H_SPACING = 210;
+
+    interface VisNode {
+        id: string;
+        label: string;
+        subtitle?: string;
+        x: number;
+        y: number;
+        type: 'dir' | 'file' | 'module';
+        nodeId?: string;
+        lang?: string;
+        filePath?: string;
+        stats?: { total: number; critical: number; high: number; medium: number; low: number };
+        color?: string;
+        isExternal?: boolean;
+        childrenCount?: number;
+    }
+
+    interface VisEdge {
+        from: string;
+        to: string;
+    }
 
     // Load graph data on mount and active graph type change
     useEffect(() => {
@@ -381,7 +403,7 @@ export function Visualizer({ issues }: VisualizerProps) {
                     }
                 }
             }
-            setExpandedDirs(autoExpand);
+            setExpandedBranchIds(autoExpand);
             hasAutoExpanded.current = true;
         }
     }, [status, fileNodes]);
@@ -391,20 +413,11 @@ export function Visualizer({ issues }: VisualizerProps) {
         return moduleGroups.filter(g => !g.isExternal);
     }, [moduleGroups, showExternals]);
 
-    const toggleModule = (name: string) => {
-        setExpandedModules(prev => {
+    const toggleBranch = (id: string) => {
+        setExpandedBranchIds(prev => {
             const next = new Set(prev);
-            if (next.has(name)) next.delete(name);
-            else next.add(name);
-            return next;
-        });
-    };
-
-    const toggleDir = (path: string) => {
-        setExpandedDirs(prev => {
-            const next = new Set(prev);
-            if (next.has(path)) next.delete(path);
-            else next.add(path);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
             return next;
         });
     };
@@ -425,158 +438,197 @@ export function Visualizer({ issues }: VisualizerProps) {
         return { total, critical, high, medium };
     };
 
-    const renderDirNode = (node: DirNode, depth: number): React.ReactNode => {
-        if (node.type === 'file') {
-            const fileNode = fileNodes.find(n => n.id === node.nodeId);
-            const stats = fileNode ? getFileIssueCount(fileNode.filePath) : { total: 0, critical: 0, high: 0, medium: 0, low: 0 };
-            const ext = node.name.split('.').pop()?.toLowerCase() || '';
-            const dotClass = ext === 'ts' || ext === 'tsx' ? 'bb-lang-dot--ts' : ext === 'js' || ext === 'jsx' ? 'bb-lang-dot--js' : 'bb-lang-dot--other';
+    const computeTreeLayout = (): { nodes: VisNode[]; edges: VisEdge[] } => {
+        const nodes: VisNode[] = [];
+        const edges: VisEdge[] = [];
+        let yCounter = 0;
+        const walk = (dirNodes: DirNode[], depth: number, parentId?: string) => {
+            for (const dn of dirNodes) {
+                const x = 30 + depth * NODE_H_SPACING;
+                const y = 20 + yCounter * NODE_V_SPACING;
+                yCounter++;
+                if (dn.type === 'dir') {
+                    const id = `dir:${dn.path}`;
+                    const childIssues = countDirIssues(dn);
+                    nodes.push({ id, label: dn.name, subtitle: dn.path, x, y, type: 'dir', stats: childIssues, childrenCount: dn.children?.length });
+                    if (parentId) edges.push({ from: parentId, to: id });
+                    if (expandedBranchIds.has(dn.path) && dn.children && dn.children.length > 0) {
+                        walk(dn.children, depth + 1, id);
+                    }
+                } else {
+                    const fileNode = fileNodes.find(f => f.id === dn.nodeId);
+                    if (fileNode) {
+                        const stats = getFileIssueCount(fileNode.filePath);
+                        nodes.push({ id: dn.nodeId!, label: dn.name, subtitle: fileNode.filePath, x, y, type: 'file', nodeId: dn.nodeId!, lang: fileNode.language, filePath: fileNode.filePath, stats });
+                        if (parentId) edges.push({ from: parentId, to: dn.nodeId! });
+                    }
+                }
+            }
+        };
+        walk(dirTree, 0);
+        return { nodes, edges };
+    };
+
+    const computeModuleLayout = (): { nodes: VisNode[]; edges: VisEdge[] } => {
+        const nodes: VisNode[] = [];
+        const edges: VisEdge[] = [];
+        const modRowY = 20;
+        const fileRowY = modRowY + NODE_V_SPACING;
+        let x = 30;
+        for (const group of filteredModuleGroups) {
+            const color = moduleColorMap[group.name] || '#888';
+            const severityTotals = { critical: 0, high: 0, medium: 0 };
+            for (const iss of group.issues) {
+                if (iss.severity === 'critical') severityTotals.critical++;
+                else if (iss.severity === 'high') severityTotals.high++;
+                else if (iss.severity === 'medium') severityTotals.medium++;
+            }
+            const modId = `mod:${group.name}`;
+            nodes.push({ id: modId, label: group.name, subtitle: `${group.nodes.length} file${group.nodes.length !== 1 ? 's' : ''}`, x, y: modRowY, type: 'module', color, stats: severityTotals, isExternal: group.isExternal, childrenCount: group.nodes.length });
+            if (expandedBranchIds.has(group.name) && group.nodes.length > 0) {
+                let fx = x - (Math.min(group.nodes.length, 5) * NODE_H_SPACING) / 2;
+                for (const node of group.nodes.slice(0, 5)) {
+                    const stats = getFileIssueCount(node.filePath);
+                    nodes.push({ id: node.id, label: node.fileName.split('/').pop() || node.fileName, subtitle: node.filePath, x: fx, y: fileRowY, type: 'file', nodeId: node.id, lang: node.language, filePath: node.filePath, stats });
+                    edges.push({ from: modId, to: node.id });
+                    fx += NODE_H_SPACING;
+                }
+                if (group.nodes.length > 5) {
+                    nodes.push({ id: `${modId}:overflow`, label: `+${group.nodes.length - 5} more`, subtitle: '', x: fx, y: fileRowY, type: 'file' });
+                    edges.push({ from: modId, to: `${modId}:overflow` });
+                }
+            }
+            x += NODE_H_SPACING;
+        }
+        return { nodes, edges };
+    };
+
+    const visualLayoutData = useMemo((): { nodes: VisNode[]; edges: VisEdge[] } => {
+        if (graphType !== 'files') return { nodes: [], edges: [] };
+        return filesLayout === 'tree' ? computeTreeLayout() : computeModuleLayout();
+    }, [filesLayout, dirTree, filteredModuleGroups, expandedBranchIds, moduleColorMap, fileNodes, issues]);
+
+    const layoutNodePosMap = useMemo(() => {
+        const map = new Map<string, { x: number; y: number }>();
+        for (const n of visualLayoutData.nodes) {
+            map.set(n.id, { x: n.x, y: n.y });
+        }
+        return map;
+    }, [visualLayoutData]);
+
+    const getEdgePathFromPos = (from: { x: number; y: number }, to: { x: number; y: number }): string => {
+        const sCX = from.x + NODE_WIDTH / 2;
+        const sCY = from.y + NODE_HEIGHT / 2;
+        const tCX = to.x + NODE_WIDTH / 2;
+        const tCY = to.y + NODE_HEIGHT / 2;
+        const dx = tCX - sCX;
+        const dy = tCY - sCY;
+        const horizontal = Math.abs(dx) >= Math.abs(dy);
+        let sX: number, sY: number, tX: number, tY: number;
+        if (horizontal) {
+            sX = dx > 0 ? from.x + NODE_WIDTH : from.x;
+            sY = sCY;
+            tX = dx > 0 ? to.x : to.x + NODE_WIDTH;
+            tY = tCY;
+        } else {
+            sX = sCX;
+            sY = dy > 0 ? from.y + NODE_HEIGHT : from.y;
+            tX = tCX;
+            tY = dy > 0 ? to.y : to.y + NODE_HEIGHT;
+        }
+        const bend = horizontal ? Math.abs(tX - sX) * 0.45 : Math.abs(tY - sY) * 0.45;
+        const c1x = horizontal ? sX + (dx > 0 ? bend : -bend) : sX;
+        const c1y = horizontal ? sY : sY + (dy > 0 ? bend : -bend);
+        const c2x = horizontal ? tX - (dx > 0 ? bend : -bend) : tX;
+        const c2y = horizontal ? tY : tY - (dy > 0 ? bend : -bend);
+        return `M ${sX} ${sY} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tX} ${tY}`;
+    };
+
+    const renderLayoutEdges = () => visualLayoutData.edges.map((edge, i) => {
+        const from = layoutNodePosMap.get(edge.from);
+        const to = layoutNodePosMap.get(edge.to);
+        if (!from || !to) return null;
+        return (
+            <path
+                key={`${edge.from}→${edge.to}${i}`}
+                d={getEdgePathFromPos(from, to)}
+                className="bb-vis-edge-line"
+                markerEnd="url(#arrowhead)"
+            />
+        );
+    });
+
+    const renderLayoutNodes = () => visualLayoutData.nodes.map(vn => {
+        if (vn.type === 'dir' || vn.type === 'module') {
+            const canExpand = (vn.childrenCount ?? 0) > 0;
+            const isExpanded = expandedBranchIds.has(vn.nodeId ?? vn.id.replace(/^(dir|mod):/, ''));
             return (
                 <div
-                    key={node.path}
-                    className={`bb-tree-file${selectedNodeId === node.nodeId ? ' bb-tree-file--selected' : ''}`}
-                    style={{ paddingLeft: `${16 + depth * 16}px` }}
-                    onClick={(e) => { e.stopPropagation(); if (node.nodeId) setSelectedNodeId(node.nodeId); }}
+                    key={vn.id}
+                    className="bb-vis-node bb-vis-node--dir"
+                    style={{
+                        left: `${vn.x}px`,
+                        top: `${vn.y}px`,
+                        pointerEvents: 'auto',
+                        width: `${NODE_WIDTH}px`,
+                        height: `${NODE_HEIGHT}px`,
+                        borderColor: vn.type === 'module' ? (vn.color || undefined) : undefined,
+                    }}
+                    onClick={() => {
+                        const id = vn.type === 'dir' ? vn.subtitle || vn.label : vn.label;
+                        if (canExpand) toggleBranch(id);
+                    }}
                 >
-                    <span className={`bb-lang-dot ${dotClass}`} />
-                    <span className="bb-tree-file__name">{node.name}</span>
-                    {stats.total > 0 && (
-                        <span className={`bb-tree-badge bb-tree-badge--${stats.critical > 0 ? 'critical' : stats.high > 0 ? 'high' : 'medium'}`}>
-                            {stats.total}
+                    <div className="bb-vis-node-header">
+                        <span className="bb-vis-node-title" title={vn.label}>
+                            {vn.type === 'module' && <span className="bb-vis-node-lang-dot" style={{ background: vn.color || '#888', marginRight: 4 }} />}
+                            {vn.label}
                         </span>
+                        {canExpand && <span style={{ fontSize: 10, color: 'var(--bb-color-muted)' }}>{isExpanded ? '–' : '+'}</span>}
+                    </div>
+                    {vn.subtitle && <div className="bb-vis-node-subtitle">{vn.subtitle}</div>}
+                    {vn.stats && (vn.stats.critical > 0 || vn.stats.high > 0 || vn.stats.medium > 0) && (
+                        <div style={{ display: 'flex', gap: 4, marginTop: 2 }}>
+                            {vn.stats.critical > 0 && <span className="bb-vis-node-badge bb-vis-node-badge--critical">{vn.stats.critical}</span>}
+                            {vn.stats.high > 0 && <span className="bb-vis-node-badge bb-vis-node-badge--high">{vn.stats.high}</span>}
+                            {vn.stats.medium > 0 && <span className="bb-vis-node-badge bb-vis-node-badge--medium">{vn.stats.medium}</span>}
+                        </div>
                     )}
+                    {vn.isExternal && <span style={{ fontSize: 8, color: 'var(--bb-color-muted)' }}>ext</span>}
                 </div>
             );
         }
-        const isExpanded = expandedDirs.has(node.path);
-        const childIssues = countDirIssues(node);
+        const stats = vn.stats || { total: 0, critical: 0, high: 0, medium: 0, low: 0 };
+        const issueClass = stats.critical > 0 ? ' bb-vis-node--issue-critical' : stats.high > 0 ? ' bb-vis-node--issue-high' : stats.medium > 0 ? ' bb-vis-node--issue-medium' : '';
         return (
-            <div key={node.path}>
-                <div
-                    className="bb-tree-dir"
-                    style={{ paddingLeft: `${8 + depth * 16}px` }}
-                    onClick={() => toggleDir(node.path)}
-                >
-                    <span className="bb-tree-dir__chevron">{isExpanded ? '▾' : '▸'}</span>
-                    <span className="bb-tree-dir__icon">📁</span>
-                    <span className="bb-tree-dir__name">{node.name}</span>
-                    {childIssues.total > 0 && (
-                        <span className={`bb-tree-badge bb-tree-badge--${childIssues.critical > 0 ? 'critical' : childIssues.high > 0 ? 'high' : 'medium'}`}>
-                            {childIssues.total}
-                        </span>
+            <div
+                key={vn.id}
+                className={`bb-vis-node${selectedNodeId === vn.nodeId ? ' bb-vis-node--selected' : ''}${issueClass}`}
+                style={{
+                    left: `${vn.x}px`,
+                    top: `${vn.y}px`,
+                    pointerEvents: 'auto',
+                    width: `${NODE_WIDTH}px`,
+                    height: `${NODE_HEIGHT}px`
+                }}
+                onMouseDown={(e) => {
+                    if (vn.nodeId) {
+                        e.stopPropagation();
+                        setSelectedNodeId(vn.nodeId);
+                    }
+                }}
+            >
+                <div className="bb-vis-node-header">
+                    <span className="bb-vis-node-title" title={vn.label}>{vn.label}</span>
+                    {stats.total > 0 && (
+                        <span className={`bb-vis-node-badge bb-vis-node-badge--${stats.critical > 0 ? 'critical' : 'high'}`}>{stats.total}</span>
                     )}
-                    <span className="bb-tree-dir__count">{node.children?.length || 0}</span>
                 </div>
-                {isExpanded && node.children && (
-                    <div>{node.children.map(child => renderDirNode(child, depth + 1))}</div>
-                )}
+                {vn.subtitle && <div className="bb-vis-node-filepath">{vn.subtitle}</div>}
+                {vn.lang && <div className="bb-vis-node-lang">{vn.lang}</div>}
             </div>
         );
-    };
-
-    const renderModule = () => (
-        <div className="bb-module-view">
-            <div className="bb-module-grid">
-                {filteredModuleGroups.map(group => {
-                    const color = moduleColorMap[group.name] || '#888';
-                    const isExpanded = expandedModules.has(group.name);
-                    const deps = moduleDependencies[group.name];
-                    const depList = deps ? Array.from(deps) : [];
-                    const severityTotals = { critical: 0, high: 0, medium: 0 };
-                    for (const iss of group.issues) {
-                        if (iss.severity === 'critical') severityTotals.critical++;
-                        else if (iss.severity === 'high') severityTotals.high++;
-                        else if (iss.severity === 'medium') severityTotals.medium++;
-                    }
-                    return (
-                        <div key={group.name} className={`bb-module-card${group.isExternal ? ' bb-module-card--external' : ''}`} style={{ '--module-color': color } as React.CSSProperties}>
-                            <div className="bb-module-card__header" onClick={() => toggleModule(group.name)}>
-                                <span className="bb-module-card__dot" style={{ background: color }} />
-                                <span className="bb-module-card__name" title={group.name}>{group.name}</span>
-                                {group.isExternal && <span className="bb-module-card__ext-badge">ext</span>}
-                                <span className="bb-module-card__chevron">{isExpanded ? '▾' : '▸'}</span>
-                            </div>
-                            <div className="bb-module-card__stats">
-                                <span>{group.nodes.length} file{group.nodes.length !== 1 ? 's' : ''}</span>
-                                <span>{depList.length} dep{depList.length !== 1 ? 's' : ''}</span>
-                                {severityTotals.critical > 0 && <span className="bb-severity-indicator bb-severity-indicator--critical">●{severityTotals.critical}</span>}
-                                {severityTotals.high > 0 && <span className="bb-severity-indicator bb-severity-indicator--high">●{severityTotals.high}</span>}
-                                {severityTotals.medium > 0 && <span className="bb-severity-indicator bb-severity-indicator--medium">●{severityTotals.medium}</span>}
-                            </div>
-                            {depList.length > 0 && (
-                                <div className="bb-module-card__deps">
-                                    {depList.slice(0, 3).map(d => (
-                                        <span key={d} className="bb-module-card__dep-pill" style={{ '--pill-color': moduleColorMap[d] || '#888' } as React.CSSProperties}>{d}</span>
-                                    ))}
-                                    {depList.length > 3 && <span className="bb-module-card__dep-overflow">+{depList.length - 3}</span>}
-                                </div>
-                            )}
-                            {isExpanded && (
-                                <div className="bb-module-card__files">
-                                    {group.nodes.map(node => {
-                                        const stats = getFileIssueCount(node.filePath);
-                                        return (
-                                            <div
-                                                key={node.id}
-                                                className={`bb-module-card__file${selectedNodeId === node.id ? ' bb-module-card__file--selected' : ''}`}
-                                                onClick={(e) => { e.stopPropagation(); setSelectedNodeId(node.id); }}
-                                            >
-                                                <span className="bb-module-card__file-name">{node.fileName.split('/').pop()}</span>
-                                                {stats.total > 0 && (
-                                                    <span className={`bb-tree-badge bb-tree-badge--${stats.critical > 0 ? 'critical' : 'high'}`}>{stats.total}</span>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </div>
-                    );
-                })}
-            </div>
-        </div>
-    );
-
-    const renderTree = () => (
-        <div className="bb-tree-view">
-            <div className="bb-tree-search">
-                <input
-                    type="text"
-                    placeholder="Search files..."
-                    value={treeSearchQuery}
-                    onChange={e => setTreeSearchQuery(e.target.value)}
-                    className="bb-tree-search__input"
-                />
-            </div>
-            <div className="bb-tree-content">
-                {filteredFileNodes ? (
-                    <div className="bb-tree-filtered-list">
-                        {filteredFileNodes.map(node => {
-                            const stats = getFileIssueCount(node.filePath);
-                            const ext = node.fileName.split('.').pop()?.toLowerCase() || '';
-                            const dotClass = ext === 'ts' || ext === 'tsx' ? 'bb-lang-dot--ts' : ext === 'js' || ext === 'jsx' ? 'bb-lang-dot--js' : 'bb-lang-dot--other';
-                            return (
-                                <div
-                                    key={node.id}
-                                    className={`bb-tree-file${selectedNodeId === node.id ? ' bb-tree-file--selected' : ''}`}
-                                    style={{ paddingLeft: '16px' }}
-                                    onClick={() => setSelectedNodeId(node.id)}
-                                >
-                                    <span className={`bb-lang-dot ${dotClass}`} />
-                                    <span className="bb-tree-file__name">{node.fileName}</span>
-                                    {stats.total > 0 && (
-                                        <span className={`bb-tree-badge bb-tree-badge--${stats.critical > 0 ? 'critical' : 'high'}`}>{stats.total}</span>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-                ) : (
-                    dirTree.map(node => renderDirNode(node, 0))
-                )}
-            </div>
-        </div>
-    );
+    });
 
     return (
         <div className="bb-visualizer-container">
@@ -647,13 +699,9 @@ export function Visualizer({ issues }: VisualizerProps) {
                 )}
 
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: '4px' }}>
-                    {graphType === 'files' && filesLayout === 'graph' && (
-                        <>
-                            <button className="bb-vis-action-btn" onClick={handleZoomIn} title="Zoom In">+</button>
-                            <button className="bb-vis-action-btn" onClick={handleZoomOut} title="Zoom Out">-</button>
-                            <button className="bb-vis-action-btn" onClick={handleZoomReset} title="Reset view">Reset</button>
-                        </>
-                    )}
+                    <button className="bb-vis-action-btn" onClick={handleZoomIn} title="Zoom In">+</button>
+                    <button className="bb-vis-action-btn" onClick={handleZoomOut} title="Zoom Out">-</button>
+                    <button className="bb-vis-action-btn" onClick={handleZoomReset} title="Reset view">Reset</button>
                     <button className="bb-vis-action-btn" onClick={requestGraph} title="Reload graph">Reload</button>
                     <button className="bb-vis-action-btn" onClick={() => vscode.postMessage({ type: 'openVisualizerTab' })} title="Open Visualizer in new tab">
                         ⛶
@@ -675,9 +723,7 @@ export function Visualizer({ issues }: VisualizerProps) {
                 </div>
             )}
 
-            {status === 'ready' && graphType === 'files' && filesLayout !== 'graph' ? (
-                filesLayout === 'module' ? renderModule() : renderTree()
-            ) : status === 'ready' && (
+            {status === 'ready' && (
                 <div 
                     className="bb-vis-viewport"
                     ref={viewportRef}
@@ -711,7 +757,9 @@ export function Visualizer({ issues }: VisualizerProps) {
                             </marker>
                         </defs>
                         <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
-                            {graphType === 'files' ? (
+                            {graphType === 'files' && filesLayout !== 'graph' ? (
+                                renderLayoutEdges()
+                            ) : graphType === 'files' ? (
                                 fileEdges.map((edge) => (
                                     <path 
                                         key={edge.id}
@@ -755,7 +803,9 @@ export function Visualizer({ issues }: VisualizerProps) {
                             transformOrigin: 'top left'
                         }}
                     >
-                        {graphType === 'files' ? (
+                        {graphType === 'files' && filesLayout !== 'graph' ? (
+                            renderLayoutNodes()
+                        ) : graphType === 'files' ? (
                             fileNodes.map((node) => {
                                 const pos = node.position || { x: 50, y: 50 };
                                 const issueStats = getFileIssueCount(node.filePath);
