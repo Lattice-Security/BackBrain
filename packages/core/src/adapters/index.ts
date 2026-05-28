@@ -17,6 +17,7 @@ export {
     type InProcessAgentReviewScannerOptions,
 } from './in-process-agent-review-scanner';
 export * from './vercel-ai-adapter';
+export * from './cli-provider-adapter';
 
 export const DEFAULT_SCANNERS = [
     { name: 'semgrep', scanner: new SemgrepScanner() },

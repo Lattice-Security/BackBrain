@@ -13,11 +13,13 @@ import {
     VercelAIAdapter,
     createProviderConfig,
     AIAnalysisService,
+    type AIProvider,
     type SupportedProvider,
     type SecurityIssue,
     type SecurityFix,
     createLogger,
 } from '@backbrain/core';
+import { CLIProviderAdapter, type CLIProviderConfig } from '@backbrain/core';
 import { getAIKeyService } from './ai-key-service';
 
 const logger = createLogger('AIAdapterFactory');
@@ -34,8 +36,8 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache TTL
 // Cached Adapter Instance
 // ============================================================================
 
-let cachedAdapter: VercelAIAdapter | null = null;
-let cachedProvider: SupportedProvider | null = null;
+let cachedAdapter: AIProvider | null = null;
+let cachedProvider: SupportedProvider | 'cli-codex' | 'cli-gemini' | 'cli-opencode' | null = null;
 let lastRequestTime = 0;
 
 // ============================================================================
@@ -111,7 +113,7 @@ function recordRequest(): void {
  * 
  * @returns Cached adapter or newly created one, null if no provider available
  */
-export async function getOrCreateAIAdapter(): Promise<VercelAIAdapter | null> {
+export async function getOrCreateAIAdapter(): Promise<AIProvider | null> {
     // Return cached adapter if still valid
     if (cachedAdapter && cachedProvider) {
         const isAvailable = await cachedAdapter.isAvailable();
@@ -181,14 +183,56 @@ export async function getOrCreateAIAdapter(): Promise<VercelAIAdapter | null> {
         }
     }
 
-    logger.warn('No AI provider available');
+    // 3. Fallback to CLI agents (codex, gemini, opencode) when no API key is available
+    const agentBackends = config.get<string[]>('agentBackends', ['codex', 'gemini', 'opencode']);
+    const preferredBackend = config.get<string>('agentPreferredBackend', 'codex');
+    const binaryPaths: Record<string, string> = {
+        codex: config.get('agentBinaryPathCodex', ''),
+        gemini: config.get('agentBinaryPathGemini', ''),
+        opencode: config.get('agentBinaryPathOpencode', ''),
+    };
+    const models: Record<string, string> = {
+        codex: config.get('agentCodexModel', ''),
+        opencode: config.get('agentOpencodeModel', ''),
+    };
+    const variants: Record<string, string> = {
+        opencode: config.get('agentOpencodeVariant', ''),
+    };
+
+    // Sort backends so preferred is first
+    const sortedBackends = [...agentBackends].sort((a, b) => {
+        if (a === preferredBackend) return -1;
+        if (b === preferredBackend) return 1;
+        return 0;
+    });
+
+    for (const backend of sortedBackends) {
+        if (!['codex', 'gemini', 'opencode'].includes(backend)) continue;
+
+        const adapterConfig: CLIProviderConfig = {
+            backend: backend as 'codex' | 'gemini' | 'opencode',
+            binaryPath: binaryPaths[backend] || backend,
+            ...(models[backend] ? { model: models[backend] } : {}),
+            ...(variants[backend] ? { variant: variants[backend] } : {}),
+        };
+
+        const adapter = new CLIProviderAdapter(adapterConfig);
+        if (await adapter.isAvailable()) {
+            cachedAdapter = adapter;
+            cachedProvider = `cli-${backend}` as any;
+            logger.info(`Using CLI agent fallback: ${backend}`);
+            return adapter;
+        }
+    }
+
+    logger.warn('No AI provider or CLI agent available');
     return null;
 }
 
 /**
  * Get the currently active provider name
  */
-export function getActiveProvider(): SupportedProvider | null {
+export function getActiveProvider(): SupportedProvider | 'cli-codex' | 'cli-gemini' | 'cli-opencode' | null {
     return cachedProvider;
 }
 
@@ -208,7 +252,7 @@ export function clearCachedAdapter(): void {
  * Execute an AI operation with fallback to other providers on failure
  */
 async function executeWithFallback<T>(
-    operation: (adapter: VercelAIAdapter) => Promise<T>,
+    operation: (adapter: AIProvider) => Promise<T>,
     operationName: string
 ): Promise<T> {
     // Wait for rate limit
@@ -216,9 +260,9 @@ async function executeWithFallback<T>(
     recordRequest();
 
     const keyService = getAIKeyService();
-    const triedProviders: SupportedProvider[] = [];
+    const triedProviders: string[] = [];
     const maxRetries = 2;
-    let lastProvider: SupportedProvider | null = null;
+    let lastProvider: string | null = null;
     let lastError: unknown = null;
 
     // Try with current cached adapter first
@@ -249,11 +293,11 @@ async function executeWithFallback<T>(
 
         // Try to get adapter for this provider
         const apiKey = await keyService.getApiKey(provider);
-        const config = apiKey
+        const providerConfig = apiKey
             ? createProviderConfig(provider, apiKey)
             : createProviderConfig(provider);
 
-        const adapter = new VercelAIAdapter(config);
+        const adapter = new VercelAIAdapter(providerConfig);
         if (!(await adapter.isAvailable())) continue;
 
         triedProviders.push(provider);
