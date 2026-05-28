@@ -326,67 +326,67 @@ Make sure connections reference valid step IDs. Do not include extra comments ou
         const isBackBrain = fileNames.some(f => f.includes('severity-panel-provider') || f.includes('cli-agent-review'));
 
         if (isBackBrain) {
-            // Build a beautiful diagram of BackBrain's scan and fix flow!
+            // Build a vertical diagram of BackBrain's scan and fix flow!
             const steps: WorkflowStep[] = [
                 {
                     id: 'w-input-file',
                     title: 'Scan Request',
                     description: 'User triggers File or Workspace scan',
                     type: 'input',
-                    position: { x: 50, y: 150 }
+                    position: { x: 80, y: 50 }
                 },
                 {
                     id: 'w-deterministic-scan',
                     title: 'Deterministic Scanners',
                     description: 'Run Semgrep, Gitleaks, Trivy & Vibe rules',
                     type: 'action',
-                    position: { x: 230, y: 150 }
+                    position: { x: 80, y: 200 }
                 },
                 {
                     id: 'w-check-agent',
                     title: 'Agent Review Enabled?',
                     description: 'Check if AI Specialists scanning is enabled in configuration',
                     type: 'decision',
-                    position: { x: 420, y: 150 }
+                    position: { x: 80, y: 350 }
                 },
                 {
                     id: 'w-agent-planner',
                     title: 'AI Planner Agent',
                     description: 'Orchestrator spawns task-focused specialist agents',
                     type: 'action',
-                    position: { x: 610, y: 50 }
+                    position: { x: 350, y: 200 }
                 },
                 {
                     id: 'w-agent-specialists',
                     title: 'Specialist Review',
                     description: 'AI specialists review code lines and report findings',
                     type: 'action',
-                    position: { x: 800, y: 50 }
+                    position: { x: 350, y: 350 }
                 },
                 {
                     id: 'w-aggregator',
                     title: 'Aggregator & Verification',
                     description: 'Merge duplicates, verify finding locations against AST',
                     type: 'action',
-                    position: { x: 990, y: 150 }
+                    position: { x: 80, y: 500 }
                 },
                 {
                     id: 'w-render-ui',
                     title: 'Issues Sidebar Panel',
                     description: 'Render categorized findings in VS Code Severity view',
                     type: 'output',
-                    position: { x: 1180, y: 150 }
+                    position: { x: 80, y: 650 }
                 },
                 {
                     id: 'w-apply-fix',
                     title: 'One-Click Revertible Fix',
                     description: 'User applies AI replacement or reverts in one click',
                     type: 'action',
-                    position: { x: 1370, y: 150 }
+                    position: { x: 80, y: 800 }
                 }
             ];
 
-            // If we have active critical or high issues, let's inject a gap node to show a "hole"!
+            // If we have active issues, inject a gap node below Aggregator
             const hasGaps = issues.length > 0;
             if (hasGaps) {
                 steps.push({
@@ -394,7 +394,7 @@ Make sure connections reference valid step IDs. Do not include extra comments ou
                     title: 'Logic Hole: Verification Symlinks',
                     description: 'Missing validation: verify Finding Location follows symlinks without boundaries',
                     type: 'decision',
-                    position: { x: 990, y: 280 }
+                    position: { x: 80, y: 950 }
                 });
             }
 
@@ -431,35 +431,35 @@ Make sure connections reference valid step IDs. Do not include extra comments ou
                 title: 'Entry Point',
                 description: 'Application starts / requests received',
                 type: 'input',
-                position: { x: 50, y: 150 }
+                position: { x: 80, y: 50 }
             },
             {
                 id: 'w-controller',
                 title: 'Request Handler / Controllers',
                 description: 'Routes incoming actions to correct controller',
                 type: 'action',
-                position: { x: 250, y: 150 }
+                position: { x: 80, y: 200 }
             },
             {
                 id: 'w-services',
                 title: 'Business Logic Services',
                 description: 'Process requests and evaluate rules',
                 type: 'action',
-                position: { x: 450, y: 150 }
+                position: { x: 80, y: 350 }
             },
             {
                 id: 'w-database',
                 title: 'Data Store / Adapter',
                 description: 'Read or write from DB or API providers',
                 type: 'action',
-                position: { x: 650, y: 150 }
+                position: { x: 80, y: 500 }
             },
             {
                 id: 'w-output',
                 title: 'Response Render',
                 description: 'Sends response or HTML view back to client',
                 type: 'output',
-                position: { x: 850, y: 150 }
+                position: { x: 80, y: 650 }
             }
         ];
 
