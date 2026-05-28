@@ -58,6 +58,7 @@ export type WebviewMessage =
     | { type: 'batchFix' }
     | { type: 'requestFixHistory' }
     | { type: 'exportReport' }
+    | { type: 'exportSelectedIssues'; issueIds: string[]; format: 'json' | 'csv' | 'markdown' }
     | { type: 'setDebugMode'; enabled: boolean }
     | { type: 'requestGraphData'; paths?: string[] };
 

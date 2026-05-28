@@ -283,6 +283,7 @@ const App = () => {
     const [agentLogs, setAgentLogs] = useState<string[]>([]);
     const [rateLimitWarning, setRateLimitWarning] = useState<{ message: string; backend?: string; sessionId?: string } | null>(null);
     const [scanIncomplete, setScanIncomplete] = useState(false);
+    const [selectedIssueIds, setSelectedIssueIds] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         vscode.setState({
@@ -1001,6 +1002,50 @@ const App = () => {
                                 <option value="deterministic">Deterministic</option>
                             </select>
                             <span className="bb-depth-pill">{scanDepthTier}</span>
+                            {selectedIssueIds.size > 0 && (
+                                <div style={{ display: 'flex', gap: '6px', marginLeft: '8px' }}>
+                                    <span style={{ fontSize: '11px', color: 'var(--bb-color-muted)', lineHeight: '22px' }}>
+                                        {selectedIssueIds.size} selected
+                                    </span>
+                                    <select
+                                        className="bb-select"
+                                        style={{ fontSize: '10px', padding: '1px 4px' }}
+                                        value=""
+                                        onChange={(e) => {
+                                            const format = e.target.value as 'json' | 'csv' | 'markdown';
+                                            if (format) {
+                                                vscode.postMessage({
+                                                    type: 'exportSelectedIssues',
+                                                    issueIds: Array.from(selectedIssueIds),
+                                                    format,
+                                                });
+                                            }
+                                            e.target.value = '';
+                                        }}
+                                    >
+                                        <option value="" disabled>Export as...</option>
+                                        <option value="json">JSON</option>
+                                        <option value="csv">CSV</option>
+                                        <option value="markdown">Markdown</option>
+                                    </select>
+                                </div>
+                            )}
+                            {issues.length > 0 && (
+                                <button
+                                    className="bb-small-button"
+                                    onClick={() => {
+                                        const allIds = new Set(groupedIssues.flatMap(g => g.issues.map(i => i.id)));
+                                        if (selectedIssueIds.size === allIds.size) {
+                                            setSelectedIssueIds(new Set());
+                                        } else {
+                                            setSelectedIssueIds(allIds);
+                                        }
+                                    }}
+                                    style={{ fontSize: '10px', marginLeft: 'auto' }}
+                                >
+                                    {selectedIssueIds.size === groupedIssues.flatMap(g => g.issues).length ? 'Deselect All' : 'Select All'}
+                                </button>
+                            )}
                         </div>
 
                         {issues.length === 0 ? (
@@ -1022,6 +1067,18 @@ const App = () => {
                                             activeFix={activeFix?.issueId === issue.id ? activeFix.fix : null}
                                             explanation={explanations[issue.id] ?? null}
                                             onClearActiveFix={() => setActiveFix(null)}
+                                            selected={selectedIssueIds.has(issue.id)}
+                                            onSelect={(id, selected) => {
+                                                setSelectedIssueIds(prev => {
+                                                    const next = new Set(prev);
+                                                    if (selected) {
+                                                        next.add(id);
+                                                    } else {
+                                                        next.delete(id);
+                                                    }
+                                                    return next;
+                                                });
+                                            }}
                                         />
                                     ))}
                                 </section>

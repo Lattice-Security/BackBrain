@@ -16,6 +16,24 @@
     background-color: var(--bb-color-background-secondary);
 }
 
+.issue-item--selected {
+    background-color: color-mix(in srgb, var(--bb-color-link) 8%, var(--bb-color-panel));
+    border-left-width: 4px;
+}
+
+/* ============================================================
+ * Selection Checkbox
+ * ============================================================ */
+.issue-checkbox {
+    margin: 0;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.issue-checkbox:checked {
+    accent-color: var(--bb-color-link);
+}
+
 /* ============================================================
  * Issue Header Row (severity badge + source chip + chevron)
  * ============================================================ */

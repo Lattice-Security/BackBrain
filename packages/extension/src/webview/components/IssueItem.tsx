@@ -31,22 +31,28 @@ interface IssueItemProps {
     activeFix: FixData | null;
     explanation: { content: string; loading: boolean; error: string | null; provider: string | null } | null;
     onClearActiveFix: () => void;
+    selected?: boolean;
+    onSelect?: (issueId: string, selected: boolean) => void;
 }
 
 // ============================================================
 // Component
 // ============================================================
 
-export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanation, onClearActiveFix }) => {
+export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanation, onClearActiveFix, selected, onSelect }) => {
     const [expanded, setExpanded] = useState(false);
 
     const handleCardClick = () => {
-        vscode.postMessage({
-            type: 'navigateToIssue',
-            filePath: issue.filePath,
-            line: issue.line,
-            column: issue.column,
-        });
+        if (onSelect) {
+            onSelect(issue.id, !selected);
+        } else {
+            vscode.postMessage({
+                type: 'navigateToIssue',
+                filePath: issue.filePath,
+                line: issue.line,
+                column: issue.column,
+            });
+        }
     };
 
     const handleChevronClick = (e: React.MouseEvent) => {
@@ -100,12 +106,23 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
 
     return (
         <div
-            className="issue-item"
+            className={`issue-item${selected ? ' issue-item--selected' : ''}`}
             onClick={handleCardClick}
             style={severityStyle}
         >
-            {/* ── Top row: severity + source chip + chevron ── */}
+            {/* ── Top row: selection checkbox + severity + source chip + chevron ── */}
             <div className="issue-item-header">
+                {onSelect && (
+                    <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={(e) => {
+                            e.stopPropagation();
+                            onSelect(issue.id, e.target.checked);
+                        }}
+                        className="issue-checkbox"
+                    />
+                )}
                 <span className="severity-badge">{issue.severity}</span>
                 {sourceChipLabel && (
                     <span className={sourceChipClass}>{sourceChipLabel}</span>
