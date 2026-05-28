@@ -66,7 +66,8 @@ export async function scanFileCommand(ctx: CommandContext, uri?: vscode.Uri, opt
   const filePath = targetUri.fsPath;
 
   // Skip TypeScript declaration files — they only contain type information
-  if (filePath.endsWith('.d.ts') || filePath.endsWith('.d.tsx')) {
+  const declExts = ['.d.ts', '.d.tsx', '.d.mts', '.d.cts'];
+  if (declExts.some(ext => filePath.endsWith(ext))) {
     logger.debug('Skipping .d.ts file', { filePath });
     return;
   }

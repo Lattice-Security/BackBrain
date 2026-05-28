@@ -299,7 +299,7 @@ export class VibeCodeScanner implements SecurityScanner {
 
     // Skip TypeScript declaration files — they contain type-only imports
     // for @types/* packages that are not runtime dependencies.
-    if (/\.d\.(ts|tsx)$/.test(filePath)) {
+    if (/\.d\.(ts|tsx|mts|cts)$/.test(filePath)) {
       return issues;
     }
 

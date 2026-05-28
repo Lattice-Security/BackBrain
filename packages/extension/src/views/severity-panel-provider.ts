@@ -975,6 +975,21 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             return;
         }
 
+        const filePath = editor.document.uri.fsPath;
+
+        // Skip TypeScript declaration files — they only contain type information
+        const declExts = ['.d.ts', '.d.tsx', '.d.mts', '.d.cts'];
+        if (declExts.some(ext => filePath.endsWith(ext))) {
+            this._postMessage({ type: 'scanComplete', issues: [] });
+            return;
+        }
+
+        // Skip files inside node_modules
+        if (filePath.includes('/node_modules/') || filePath.includes('\\node_modules\\') || filePath.startsWith('node_modules/')) {
+            this._postMessage({ type: 'scanComplete', issues: [] });
+            return;
+        }
+
         this._isScanning = true;
         this._lastScanError = null;
         this._lastBatchProgress = null;
@@ -982,22 +997,6 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         this._postMessage({ type: 'scanStarted' });
 
         try {
-            const filePath = editor.document.uri.fsPath;
-
-            // Skip TypeScript declaration files — they only contain type information
-            if (filePath.endsWith('.d.ts') || filePath.endsWith('.d.tsx')) {
-                this._isScanning = false;
-                this._postMessage({ type: 'scanComplete', issues: [] });
-                return;
-            }
-
-            // Skip files inside node_modules
-            if (filePath.includes('/node_modules/') || filePath.includes('\\node_modules\\') || filePath.startsWith('node_modules/')) {
-                this._isScanning = false;
-                this._postMessage({ type: 'scanComplete', issues: [] });
-                return;
-            }
-
             const content = editor.document.getText();
             const result = await this._securityService.scanFile(filePath, content, {
                 scanners: this._getSelectedScannerNames(),
