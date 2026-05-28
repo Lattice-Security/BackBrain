@@ -218,9 +218,6 @@ const OpenCodeTerminal: React.FC<{ logs: string[]; backend?: string }> = ({ logs
     return (
         <div className="bb-terminal">
             <div className="bb-terminal-header">
-                <span className="bb-terminal-dot bb-terminal-dot--red" />
-                <span className="bb-terminal-dot bb-terminal-dot--yellow" />
-                <span className="bb-terminal-dot bb-terminal-dot--green" />
                 <span className="bb-terminal-title">Agent Output</span>
                 <span className="bb-terminal-count">{logs.length}</span>
             </div>

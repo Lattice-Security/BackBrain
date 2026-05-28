@@ -9,6 +9,7 @@ import type {
     ScanResult,
     SecurityIssue,
     SecurityScanContext,
+    SecurityScanPhase,
     SecurityScanStatusUpdate,
     SecurityScanner,
     Severity,
@@ -36,6 +37,8 @@ interface ExecLikeError {
 interface BackendExecutionOptions {
     isReadinessProbe?: boolean;
     expectsJsonObject?: boolean;
+    /** Callback for each progress line emitted during execution (streaming) */
+    onStderrLine?: (line: string) => void;
 }
 
 interface BackendReadinessState {
@@ -343,6 +346,9 @@ export class CliAgentReviewScanner implements SecurityScanner {
             const plannerRaw = await this.runBackend(
                 leadBackend, plannerPrompt, repositoryRoot,
                 this.plannerTimeoutMs, 'planner',
+                {
+                    onStderrLine: this.createAgentLogCallback(context, 'agent-planner', leadBackend.id),
+                },
             );
             planner = plannerSchema.parse(this.extractJson(plannerRaw));
         } catch (error) {
@@ -401,17 +407,23 @@ export class CliAgentReviewScanner implements SecurityScanner {
                     await this.runWithConcurrency(
                         specialists,
                         this.specialistConcurrency,
-                        (specialist, index) => this.runSpecialistSafe(
-                            specialist,
-                            availableBackends[index % availableBackends.length]!,
-                            {
-                                repositoryRoot,
-                                deterministicIssues,
-                                changedFiles,
-                                repoSummary: planner.repoSummary,
-                            },
-                            timedOutSpecialists,
-                        ),
+                        (specialist, index) => {
+                            const specialistBackend = availableBackends[index % availableBackends.length]!;
+                            return this.runSpecialistSafe(
+                                specialist,
+                                specialistBackend,
+                                {
+                                    repositoryRoot,
+                                    deterministicIssues,
+                                    changedFiles,
+                                    repoSummary: planner.repoSummary,
+                                },
+                                timedOutSpecialists,
+                                {
+                                    onStderrLine: this.createAgentLogCallback(context, 'agent-specialists', specialistBackend.id),
+                                },
+                            );
+                        },
                     ),
                 ),
                 new Promise<never>((_, reject) =>
@@ -477,6 +489,9 @@ export class CliAgentReviewScanner implements SecurityScanner {
             const aggregatorRaw = await this.runBackend(
                 leadBackend, aggregatorPrompt, repositoryRoot,
                 this.aggregatorTimeoutMs, 'aggregator',
+                {
+                    onStderrLine: this.createAgentLogCallback(context, 'agent-aggregator', leadBackend.id),
+                },
             );
 
             // Attempt 1: standard extraction + Zod validation.
@@ -604,7 +619,8 @@ export class CliAgentReviewScanner implements SecurityScanner {
             deterministicIssues: SecurityIssue[];
             changedFiles: string[];
             repoSummary: string;
-        }
+        },
+        options?: BackendExecutionOptions,
     ): Promise<{ roleName: string; backend: string; findings: SpecialistOutput['findings'] }> {
         logger.info('Running agent review specialist', {
             roleName: specialist.name,
@@ -621,6 +637,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         const raw = await this.runBackend(
             backend, prompt, context.repositoryRoot,
             this.specialistTimeoutMs, `specialist:${specialist.name}`,
+            options,
         );
         const parsed = specialistSchema.parse(this.extractJson(raw));
         logger.info('Agent review specialist completed', {
@@ -645,9 +662,10 @@ export class CliAgentReviewScanner implements SecurityScanner {
             repoSummary: string;
         },
         timedOutSpecialists: string[],
+        options?: BackendExecutionOptions,
     ): Promise<{ roleName: string; backend: string; findings: SpecialistOutput['findings'] }> {
         try {
-            return await this.runSpecialist(specialist, backend, context);
+            return await this.runSpecialist(specialist, backend, context, options);
         } catch (error) {
             const execError = error as ExecLikeError;
             const reason = toError(error).message.startsWith('Inactivity') ? 'inactivity' : 'timeout/error';
@@ -688,6 +706,23 @@ export class CliAgentReviewScanner implements SecurityScanner {
         // Look for session ID patterns in opencode/codex output
         const match = text.match(/session[_\s]*[iI][dD]["\s:=]+(\S+)/);
         return match?.[1];
+    }
+
+    private createAgentLogCallback(
+        context: SecurityScanContext,
+        phase: SecurityScanPhase,
+        backend: AgentBackendId,
+    ): (line: string) => void {
+        return (line: string) => {
+            context.reportStatus?.({
+                phase,
+                level: 'info',
+                message: line,
+                backend,
+                agentLog: line,
+                scanner: this.name,
+            });
+        };
     }
 
     private reportStatus(context: SecurityScanContext, update: SecurityScanStatusUpdate): void {
@@ -978,6 +1013,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         try {
             const raw = await this.runBackendStreaming(
                 binary, args, cwd, this.buildExecEnv(backend.id), hardCeilingMs, label,
+                options.onStderrLine,
             );
             return this.normalizeBackendOutput(backend.id, raw, options);
         } catch (error) {
@@ -1009,6 +1045,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         env: NodeJS.ProcessEnv,
         hardCeilingMs: number,
         label: string,
+        onStderrLine?: (line: string) => void,
     ): Promise<string> {
         return new Promise<string>((resolve, reject) => {
             const chunks: Buffer[] = [];
@@ -1042,7 +1079,10 @@ export class CliAgentReviewScanner implements SecurityScanner {
             });
 
             const stderrChunks: Buffer[] = [];
-            child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+            child.stderr.on('data', (chunk: Buffer) => {
+                stderrChunks.push(chunk);
+                onStderrLine?.(chunk.toString('utf8'));
+            });
 
             child.on('error', (err) => {
                 reject(err);
