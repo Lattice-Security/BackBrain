@@ -1,0 +1,116 @@
+{
+  "rules": [
+    {
+      "id": "vibe-code.sql-injection",
+      "title": "SQL Injection",
+      "description": "Raw string interpolation in SQL queries. Use parameterized queries instead.",
+      "severity": "critical",
+      "type": "regex",
+      "pattern": "(?:execute|query|prepare|run)\\(\\s*(?:['\"`])\\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|EXEC|CALL)\\s+.*(?:\\$\\{|\\+|\\+?=)"
+    },
+    {
+      "id": "vibe-code.command-injection",
+      "title": "Command Injection",
+      "description": "Shell command built with string interpolation. Use execFile/spawn with arguments array instead.",
+      "severity": "critical",
+      "type": "regex",
+      "pattern": "(?:exec|execSync|execFileSync|spawn|spawnSync|system|popen|runInShell)\\s*\\([^)]*\\$\\{|runInShell\\s*:\\s*true"
+    },
+    {
+      "id": "vibe-code.hardcoded-secret",
+      "title": "Hardcoded Secret",
+      "description": "Hardcoded credentials should be replaced with environment variables or a secret manager.",
+      "severity": "critical",
+      "type": "regex",
+      "pattern": "(?:api[_-]?key|apikey|secret|password|passwd|token|auth[_-]?token|bearer|jwt|private[_-]?key|access[_-]?key|session[_-]?secret)\\s*[:=]\\s*(['\"`])(?!\\s*process\\.env|\\s*import\\.meta\\.env)\\S{8,}\\1"
+    },
+    {
+      "id": "vibe-code.eval-usage",
+      "title": "Dangerous eval Usage",
+      "description": "eval() executes arbitrary code. Use safer alternatives like JSON.parse or Function constructor (with caution).",
+      "severity": "high",
+      "type": "regex",
+      "pattern": "\\beval\\s*\\(|\\bnew\\s+Function\\s*\\([^)]*['\"`]|\\bsetTimeout\\s*\\(\\s*['\"`]|\\bsetInterval\\s*\\(\\s*['\"`]"
+    },
+    {
+      "id": "vibe-code.unsafe-innerhtml",
+      "title": "XSS via innerHTML / outerHTML",
+      "description": "Direct innerHTML/outerHTML assignment can lead to XSS. Use textContent or createElement instead.",
+      "severity": "high",
+      "type": "regex",
+      "pattern": "(?:innerHTML|outerHTML|insertAdjacentHTML)\\s*[=+]?="
+    },
+    {
+      "id": "vibe-code.insecure-deserialization",
+      "title": "Insecure Deserialization",
+      "description": "Untrusted data passed to deserialization can lead to RCE. Use safe parsing (e.g., validate input, use allowlist).",
+      "severity": "high",
+      "type": "regex",
+      "pattern": "\\bJSON\\.parse\\s*\\(\\s*(?:req\\.|request\\.|body|params|query|input|data|payload)\\b|\\.unserialize\\s*\\(|yaml\\.load\\s*\\(|pickle\\.loads?\\s*\\("
+    },
+    {
+      "id": "vibe-code.path-traversal",
+      "title": "Path Traversal",
+      "description": "User-controlled path concatenation can enable path traversal attacks. Use path.resolve with allowlist.",
+      "severity": "high",
+      "type": "regex",
+      "pattern": "(?:readFile|readFileSync|writeFile|writeFileSync|open|readdir|existsSync|unlink|rmdir|createReadStream|createWriteStream)\\s*\\(\\s*(?:path\\.join|path\\.resolve|\\+|\\$\\{|`)\\s*(?:req\\.|request\\.|body|params|query|input|data|file)"
+    },
+    {
+      "id": "vibe-code.user-input-in-response",
+      "title": "User Input Reflected in Response",
+      "description": "Reflecting unsanitized user input in HTTP responses can lead to XSS. Use proper encoding/sanitization.",
+      "severity": "high",
+      "type": "regex",
+      "pattern": "res\\.(?:send|json|end|write|render)\\s*\\([^)]*(?:req\\.|request\\.|body|params|query|input)\\b[^)]*\\)"
+    },
+    {
+      "id": "vibe-code.prototype-pollution",
+      "title": "Prototype Pollution via Merge/Assign",
+      "description": "Unsafe object merge with user input can pollute Object.prototype. Use defensive merge or Object.hasOwn checks.",
+      "severity": "high",
+      "type": "regex",
+      "pattern": "(?:Object\\.assign|_\\.merge|_\\.extend|\\.assignIn|merge|deepmerge|\\$\\.extend)\\s*\\(\\s*\\{\\s*\\}\\s*,\\s*(?:req\\.|request\\.|body|params|query|input|data)"
+    },
+    {
+      "id": "vibe-code.weak-crypto",
+      "title": "Weak or Custom Cryptography",
+      "description": "Weak hash algorithms (MD5, SHA1) or custom crypto primitives should not be used in production.",
+      "severity": "medium",
+      "type": "regex",
+      "pattern": "\\b(?:MD5|SHA1?|DES|RC[245]|Blowfish)\\s*\\("
+    },
+    {
+      "id": "vibe-code.permissive-cors",
+      "title": "Permissive CORS",
+      "description": "CORS configured to allow all origins can expose your API to cross-origin attacks.",
+      "severity": "medium",
+      "type": "regex",
+      "pattern": "(?:Access-Control-Allow-Origin|origin\\s*:\\s*['\"`]\\*|allowOrigins\\s*:\\s*['\"`]\\*|origins\\s*:\\s*\\[\\s*['\"`]\\*)"
+    },
+    {
+      "id": "vibe-code.insecure-http",
+      "title": "Insecure HTTP Connection",
+      "description": "Using http:// instead of https:// in production exposes data in transit.",
+      "severity": "medium",
+      "type": "regex",
+      "pattern": "(?:fetch|axios|request|got|superagent)\\s*[\\(.]\\s*['\"`]http://"
+    },
+    {
+      "id": "vibe-code.debug-enabled",
+      "title": "Debug Mode Enabled",
+      "description": "Debug/verbose logging in production can leak sensitive information.",
+      "severity": "low",
+      "type": "regex",
+      "pattern": "(?:debug\\s*[:=]\\s*true|NODE_ENV\\s*[:=]\\s*['\"`]development|app\\.set\\s*\\(\\s*['\"`]env['\"`]\\s*,\\s*['\"`]development)"
+    },
+    {
+      "id": "vibe-code.unsafe-regex",
+      "title": "Potentially Unsafe Regular Expression",
+      "description": "Regular expression with nested quantifiers outside character classes can cause ReDoS.",
+      "severity": "low",
+      "type": "regex",
+      "pattern": "/\\([^)]+[\\+\\*]\\)[\\+\\*]"
+    }
+  ]
+}

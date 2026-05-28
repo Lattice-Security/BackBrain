@@ -20,6 +20,8 @@
 !packages/**/*.svg
 !tests/**/*
 !scripts/**/*
+!.backbrain/**/*
+!.backbrain/*.json
 !.agent/**/*
 
 # 5. Re-ignore specific directories and files that should NEVER be tracked
