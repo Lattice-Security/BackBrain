@@ -15,6 +15,7 @@
   ],
   "activationEvents": [
     "onView:backbrain.severityPanel",
+    "onView:backbrain.visualizerTab",
     "onCommand:backbrain.scanFile",
     "onCommand:backbrain.scanWorkspace",
     "onCommand:backbrain.showSecurityPanel",

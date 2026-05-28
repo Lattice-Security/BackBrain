@@ -59,7 +59,8 @@ export type WebviewMessage =
     | { type: 'requestFixHistory' }
     | { type: 'exportReport' }
     | { type: 'setDebugMode'; enabled: boolean }
-    | { type: 'requestGraphData'; paths?: string[] };
+    | { type: 'requestGraphData'; paths?: string[] }
+    | { type: 'openVisualizerTab' };
 
 // ============================================================================
 // Extension → Webview Messages
@@ -88,7 +89,7 @@ export type ExtensionMessage =
     | { type: 'fixError'; error: string }
     | { type: 'fixSuggested'; issueId: string; fix: FixData }
     | { type: 'debugStatus'; steps: DebugStep[]; paused: boolean; phase: string }
-    | { type: 'graphData'; fileGraph: FileGraph; workflowGraph: WorkflowGraph; status: 'ready' | 'loading' | 'error' };
+    | { type: 'graphData'; fileGraph: FileGraph; workflowGraph: WorkflowGraph; status: 'ready' | 'loading' | 'error'; issues?: IssueData[] };
 
 // ============================================================================
 // Configuration Data

@@ -8,6 +8,10 @@ export default defineConfig({
         outDir: 'dist/webview',
         emptyOutDir: true,
         rollupOptions: {
+            input: {
+                'index': path.resolve(__dirname, 'index.html'),
+                'visualizer-panel': path.resolve(__dirname, 'visualizer-panel.html'),
+            },
             output: {
                 entryFileNames: 'assets/[name].js',
                 chunkFileNames: 'assets/[name].js',

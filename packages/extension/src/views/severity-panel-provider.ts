@@ -81,6 +81,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private _selectedCustomPaths: string[] | null = null;
     private _selectedCustomDisplayNames: string[] = [];
     private _visualizerService = new VisualizerService();
+    private _openVisualizerPanel: vscode.WebviewPanel | undefined;
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
@@ -441,6 +442,10 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
 
                 case 'requestGraphData':
                     await this._handleRequestGraphData(message.paths);
+                    break;
+
+                case 'openVisualizerTab':
+                    await this._handleOpenVisualizerTab();
                     break;
             }
         });
@@ -826,49 +831,59 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Handle graph data request from the Visualizer webview tab
+     * Generate graph data from current issues and workspace files
+     */
+    private async _generateGraphData(paths?: string[]): Promise<{ fileGraph: FileGraph; workflowGraph: WorkflowGraph; issues: IssueData[] }> {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders?.length) {
+            throw new Error('No workspace folder open');
+        }
+        const root = workspaceFolders[0];
+        if (!root) throw new Error('No workspace folder open');
+        const rootPath = root.uri.fsPath;
+
+        const scanPaths = paths?.length
+            ? paths
+            : this._issues.length > 0
+                ? [...new Set(this._issues.map(i => i.filePath))]
+                : await this._resolveScanPaths('workspace') ?? [];
+
+        if (scanPaths.length === 0) {
+            throw new Error('No files available for graph generation');
+        }
+
+        const fileGraph = await this._visualizerService.generateFileGraph(
+            scanPaths, this._fileSystem, rootPath,
+        );
+
+        const securityIssues: SecurityIssue[] = this._issues.map(i => ({
+            ruleId: i.id,
+            title: i.title,
+            description: i.description,
+            severity: i.severity as SecurityIssue['severity'],
+            filePath: i.filePath,
+            line: i.line,
+            snippet: i.snippet ?? '',
+        }));
+
+        const workflowGraph = await this._visualizerService.generateWorkflowGraph(
+            scanPaths, this._fileSystem, securityIssues,
+        );
+
+        return { fileGraph, workflowGraph, issues: this._issues };
+    }
+
+    /**
+     * Handle graph data request from the sidebar webview
      */
     private async _handleRequestGraphData(paths?: string[]): Promise<void> {
-        this._postMessage({ type: 'graphData', fileGraph: { nodes: [], edges: [] }, workflowGraph: { id: '', name: '', steps: [], connections: [] }, status: 'loading' });
+        this._postMessage({
+            type: 'graphData', fileGraph: { nodes: [], edges: [] }, workflowGraph: { id: '', name: '', steps: [], connections: [] }, status: 'loading',
+        });
 
         try {
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (!workspaceFolders?.length) {
-                throw new Error('No workspace folder open');
-            }
-            const rootPath = workspaceFolders[0].uri.fsPath;
-
-            // Use provided paths, or fall back to issue file paths, or scan paths
-            const scanPaths = paths?.length
-                ? paths
-                : this._issues.length > 0
-                    ? [...new Set(this._issues.map(i => i.filePath))]
-                    : await this._resolveScanPaths('workspace') ?? [];
-
-            if (scanPaths.length === 0) {
-                throw new Error('No files available for graph generation');
-            }
-
-            const fileGraph = await this._visualizerService.generateFileGraph(
-                scanPaths, this._fileSystem, rootPath,
-            );
-
-            // Convert IssueData[] to SecurityIssue-like objects for the workflow graph
-            const issues: SecurityIssue[] = this._issues.map(i => ({
-                ruleId: i.id,
-                title: i.title,
-                description: i.description,
-                severity: i.severity as SecurityIssue['severity'],
-                filePath: i.filePath,
-                line: i.line,
-                snippet: i.snippet,
-            }));
-
-            const workflowGraph = await this._visualizerService.generateWorkflowGraph(
-                scanPaths, this._fileSystem, issues,
-            );
-
-            this._postMessage({ type: 'graphData', fileGraph, workflowGraph, status: 'ready' });
+            const data = await this._generateGraphData(paths);
+            this._postMessage({ type: 'graphData', ...data, status: 'ready' });
         } catch (error) {
             logger.error('Failed to generate graph data', { error });
             this._postMessage({
@@ -876,6 +891,71 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                 fileGraph: { nodes: [], edges: [] },
                 workflowGraph: { id: '', name: '', steps: [], connections: [] },
                 status: 'error',
+            });
+        }
+    }
+
+    /**
+     * Open a standalone editor tab with the fullscreen visualizer
+     */
+    private async _handleOpenVisualizerTab(): Promise<void> {
+        if (this._openVisualizerPanel) {
+            this._openVisualizerPanel.reveal();
+            return;
+        }
+
+        const panel = vscode.window.createWebviewPanel(
+            'backbrain.visualizerTab',
+            'BackBrain Visualizer',
+            vscode.ViewColumn.One,
+            {
+                enableScripts: true,
+                localResourceRoots: [
+                    this._extensionUri,
+                    vscode.Uri.joinPath(this._extensionUri, 'dist'),
+                ],
+            }
+        );
+
+        panel.webview.html = await this._getVisualizerPanelHtml(panel.webview);
+
+        panel.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
+            switch (message.type) {
+                case 'requestGraphData':
+                    await this._handlePanelGraphDataRequest(panel, message.paths);
+                    break;
+                case 'navigateToIssue':
+                    await this._handleNavigateToIssue(message.filePath, message.line, message.column);
+                    break;
+            }
+        });
+
+        panel.onDidDispose(() => {
+            this._openVisualizerPanel = undefined;
+        });
+
+        this._openVisualizerPanel = panel;
+    }
+
+    /**
+     * Handle graph data request from the standalone visualizer tab panel
+     */
+    private async _handlePanelGraphDataRequest(panel: vscode.WebviewPanel, paths?: string[]): Promise<void> {
+        panel.webview.postMessage({
+            type: 'graphData', fileGraph: { nodes: [], edges: [] }, workflowGraph: { id: '', name: '', steps: [], connections: [] }, status: 'loading', issues: [],
+        });
+
+        try {
+            const data = await this._generateGraphData(paths);
+            panel.webview.postMessage({ type: 'graphData', ...data, status: 'ready' });
+        } catch (error) {
+            logger.error('Failed to generate graph data for panel', { error });
+            panel.webview.postMessage({
+                type: 'graphData',
+                fileGraph: { nodes: [], edges: [] },
+                workflowGraph: { id: '', name: '', steps: [], connections: [] },
+                status: 'error',
+                issues: [],
             });
         }
     }
@@ -1211,14 +1291,21 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     }
 
     private async _getHtmlForWebview(webview: vscode.Webview): Promise<string> {
-        const htmlUri = vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview', 'index.html');
+        return this._loadAndPrepareHtml(webview, 'index.html');
+    }
+
+    private async _getVisualizerPanelHtml(webview: vscode.Webview): Promise<string> {
+        return this._loadAndPrepareHtml(webview, 'visualizer-panel.html');
+    }
+
+    private async _loadAndPrepareHtml(webview: vscode.Webview, htmlFileName: string): Promise<string> {
+        const htmlUri = vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview', htmlFileName);
         const htmlContent = await vscode.workspace.fs.readFile(htmlUri);
         let html = new TextDecoder().decode(htmlContent);
 
         const nonce = getNonce();
 
         // 1. Replace asset paths with webview URIs
-        // Vite builds assets into /assets/ and references them with absolute paths in the built index.html
         html = html.replace(
             /(href|src)=(['"])\/assets\/([^'"]+)\2/gi,
             (_match, attr, _quote, fileName) => {
@@ -1228,7 +1315,6 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         );
 
         // 2. Inject Content Security Policy (CSP) and Nonce
-        // We use a more robust approach: find the <head> tag and inject CSP, then add nonce to all scripts.
         const csp = [
             "default-src 'none'",
             `img-src ${webview.cspSource} https: data:`,
@@ -1244,12 +1330,9 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         ].join('; ');
 
         // 3. Disable Service Workers to prevent "InvalidStateError"
-        // We inject this at the ABSOLUTE TOP of the head to ensure it runs before ANY other script or preload.
         const disableSwScript = `
         <script nonce="${nonce}">
             (function() {
-                // Completely disable Service Workers in the webview context
-                // This prevents "InvalidStateError: The document is in an invalid state"
                 try {
                     const noop = () => {};
                     const reject = () => Promise.reject(new Error('ServiceWorkers disabled in Webview'));
@@ -1265,10 +1348,9 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                         onmessage: null,
                         onmessageerror: null,
                         controller: null,
-                        ready: new Promise(noop) // Never resolves
+                        ready: new Promise(noop)
                     };
 
-                    // Try to override both the instance and the prototype
                     Object.defineProperty(navigator, 'serviceWorker', {
                         value: swShim,
                         configurable: false,
@@ -1276,7 +1358,6 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                         enumerable: true
                     });
 
-                    // Extra layer: proxy the global to catch any weird access patterns
                     console.log('BackBrain: ServiceWorker registration disabled');
                 } catch (e) {
                     console.warn('BackBrain: Failed to shim navigator.serviceWorker:', e);
@@ -1289,11 +1370,10 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         if (/<head[^>]*>/i.test(html)) {
             html = html.replace(/(<head[^>]*>)/i, `$1${headContent}`);
         } else {
-            // Fallback: inject at the very beginning if <head> is missing
             html = `<head>${headContent}</head>\n${html}`;
         }
 
-        // Add nonce to all script tags (module and regular)
+        // 4. Add nonce to all script tags
         html = html.replace(/<script\b([^>]*)>/gi, (_match, attrs) => {
             if (attrs.includes('nonce=')) return _match;
             return `<script nonce="${nonce}" ${attrs}>`;

@@ -22,7 +22,7 @@ export function Visualizer({ issues }: VisualizerProps) {
     
     const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
-    const [isFullscreen, setIsFullscreen] = useState(false);
+
 
     const viewportRef = useRef<HTMLDivElement>(null);
     const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -275,7 +275,7 @@ export function Visualizer({ issues }: VisualizerProps) {
     }, [selectedNodeId, fileEdges]);
 
     return (
-        <div className={`bb-visualizer-container${isFullscreen ? ' bb-visualizer-container--fullscreen' : ''}`}>
+        <div className="bb-visualizer-container">
             <div className="bb-vis-toolbar">
                 <div className="bb-vis-btn-group">
                     <button 
@@ -303,8 +303,8 @@ export function Visualizer({ issues }: VisualizerProps) {
                     <button className="bb-vis-action-btn" onClick={handleZoomOut} title="Zoom Out">-</button>
                     <button className="bb-vis-action-btn" onClick={handleZoomReset} title="Reset view">Reset</button>
                     <button className="bb-vis-action-btn" onClick={requestGraph} title="Reload graph">Reload</button>
-                    <button className="bb-vis-action-btn" onClick={() => setIsFullscreen(f => !f)} title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
-                        {isFullscreen ? '⊠' : '⛶'}
+                    <button className="bb-vis-action-btn" onClick={() => vscode.postMessage({ type: 'openVisualizerTab' })} title="Open Visualizer in new tab">
+                        ⛶
                     </button>
                 </div>
             </div>
