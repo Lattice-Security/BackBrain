@@ -37,8 +37,10 @@ interface ExecLikeError {
 interface BackendExecutionOptions {
     isReadinessProbe?: boolean;
     expectsJsonObject?: boolean;
-    /** Callback for each progress line emitted during execution (streaming) */
+    /** Callback for each progress line emitted to stderr during execution */
     onStderrLine?: (line: string) => void;
+    /** Callback for each line of output (stdout + stderr) during execution */
+    onLine?: (line: string) => void;
 }
 
 interface BackendReadinessState {
@@ -347,7 +349,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 leadBackend, plannerPrompt, repositoryRoot,
                 this.plannerTimeoutMs, 'planner',
                 {
-                    onStderrLine: this.createAgentLogCallback(context, 'agent-planner', leadBackend.id),
+                    onLine: this.createAgentLogCallback(context, 'agent-planner', leadBackend.id),
                 },
             );
             planner = plannerSchema.parse(this.extractJson(plannerRaw));
@@ -420,7 +422,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
                                 },
                                 timedOutSpecialists,
                                 {
-                                    onStderrLine: this.createAgentLogCallback(context, 'agent-specialists', specialistBackend.id),
+                                    onLine: this.createAgentLogCallback(context, 'agent-specialists', specialistBackend.id),
                                 },
                             );
                         },
@@ -490,7 +492,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 leadBackend, aggregatorPrompt, repositoryRoot,
                 this.aggregatorTimeoutMs, 'aggregator',
                 {
-                    onStderrLine: this.createAgentLogCallback(context, 'agent-aggregator', leadBackend.id),
+                    onLine: this.createAgentLogCallback(context, 'agent-aggregator', leadBackend.id),
                 },
             );
 
@@ -1014,6 +1016,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
             const raw = await this.runBackendStreaming(
                 binary, args, cwd, this.buildExecEnv(backend.id), hardCeilingMs, label,
                 options.onStderrLine,
+                options.onLine,
             );
             return this.normalizeBackendOutput(backend.id, raw, options);
         } catch (error) {
@@ -1046,6 +1049,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         hardCeilingMs: number,
         label: string,
         onStderrLine?: (line: string) => void,
+        onLine?: (line: string) => void,
     ): Promise<string> {
         return new Promise<string>((resolve, reject) => {
             const chunks: Buffer[] = [];
@@ -1076,12 +1080,14 @@ export class CliAgentReviewScanner implements SecurityScanner {
             child.stdout.on('data', (chunk: Buffer) => {
                 chunks.push(chunk);
                 resetInactivity();
+                onLine?.(chunk.toString('utf8'));
             });
 
             const stderrChunks: Buffer[] = [];
             child.stderr.on('data', (chunk: Buffer) => {
                 stderrChunks.push(chunk);
                 onStderrLine?.(chunk.toString('utf8'));
+                onLine?.(chunk.toString('utf8'));
             });
 
             child.on('error', (err) => {
