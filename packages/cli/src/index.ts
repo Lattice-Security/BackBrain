@@ -25,6 +25,8 @@ Scan options:
   --fix               After scan, apply safe auto-fixes automatically
   --fix-all           After scan, apply all fixes (including non-autoFixable)
   --commit            After scan + fix, git commit if all issues resolved
+  --opencode-model <m>  Model override for OpenCode (format: provider/model)
+  --opencode-variant <v>  Reasoning effort for OpenCode (high, max, minimal)
 
 Fix options:
   --all               Apply all fixes (including non-autoFixable)
@@ -44,6 +46,7 @@ Examples:
   backbrain scan --fix --commit
   backbrain scan --min-severity high
   backbrain scan --changed
+  backbrain scan --opencode-model anthropic/claude-sonnet-4-20250514 --opencode-variant high
   backbrain status
   backbrain fix
   backbrain fix --dry-run
@@ -109,6 +112,8 @@ function parseScanArgs(argv: string[]): ScanArgs {
         fix: argv.includes('--fix') || argv.includes('--fix-all'),
         fixAll: argv.includes('--fix-all'),
         commit: argv.includes('--commit'),
+        opencodeModel: extractFlag(argv, '--opencode-model') ?? undefined,
+        opencodeVariant: extractFlag(argv, '--opencode-variant') ?? undefined,
     };
 }
 

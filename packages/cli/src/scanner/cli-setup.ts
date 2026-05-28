@@ -11,6 +11,8 @@ import {
 export interface SetupOptions {
     noAgent?: boolean;
     scannerNames?: string[] | undefined;
+    opencodeModel?: string | undefined;
+    opencodeVariant?: string | undefined;
 }
 
 export function createScanners(options: SetupOptions = {}): SecurityScanner[] {
@@ -32,7 +34,14 @@ export function createScanners(options: SetupOptions = {}): SecurityScanner[] {
     }
 
     if (!options.noAgent) {
-        scanners.push(new CliAgentReviewScanner());
+        scanners.push(new CliAgentReviewScanner({
+            backends: {
+                opencode: {
+                    ...(options.opencodeModel ? { model: options.opencodeModel } : {}),
+                    ...(options.opencodeVariant ? { variant: options.opencodeVariant } : {}),
+                },
+            },
+        }));
     }
 
     return scanners;

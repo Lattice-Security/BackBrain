@@ -24,6 +24,7 @@ interface AgentBackendConfig {
     enabled: boolean;
     binaryPath: string;
     model?: string;
+    variant?: string;
 }
 
 interface ExecLikeError {
@@ -1060,11 +1061,17 @@ export class CliAgentReviewScanner implements SecurityScanner {
                     binary: backend.config.binaryPath,
                     args: ['--approval-mode', 'plan', '--output-format', 'json', '-p', builtPrompt],
                 };
-            case 'opencode':
-                return {
-                    binary: backend.config.binaryPath,
-                    args: ['run', '--print-logs', '--format', 'json', builtPrompt],
-                };
+            case 'opencode': {
+                const args = ['run', '--print-logs', '--format', 'json'];
+                if (backend.config.model) {
+                    args.push('--model', backend.config.model);
+                }
+                if (backend.config.variant) {
+                    args.push('--variant', backend.config.variant);
+                }
+                args.push(builtPrompt);
+                return { binary: backend.config.binaryPath, args };
+            }
         }
     }
 

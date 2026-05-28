@@ -258,6 +258,16 @@
           "type": "string",
           "default": "",
           "description": "Optional override path for the OpenCode CLI binary"
+        },
+        "backbrain.ai.agentOpencodeModel": {
+          "type": "string",
+          "default": "",
+          "description": "Optional model override for OpenCode agent review (format: provider/model)"
+        },
+        "backbrain.ai.agentOpencodeVariant": {
+          "type": "string",
+          "default": "",
+          "description": "Optional reasoning effort variant for OpenCode (e.g., high, max, minimal)"
         }
       }
     },

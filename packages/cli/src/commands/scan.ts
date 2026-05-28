@@ -34,6 +34,8 @@ export interface ScanArgs {
     fix: boolean;
     fixAll: boolean;
     commit: boolean;
+    opencodeModel?: string | undefined;
+    opencodeVariant?: string | undefined;
 }
 
 const EXCLUDED_DIRECTORIES = new Set([
@@ -64,6 +66,8 @@ export async function scanCommand(args: ScanArgs): Promise<number> {
     const scanners = createScanners({
         noAgent: args.noAgent,
         scannerNames: args.scanners,
+        opencodeModel: args.opencodeModel,
+        opencodeVariant: args.opencodeVariant,
     });
 
     const securityService = new SecurityService(scanners);

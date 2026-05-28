@@ -229,7 +229,12 @@ export async function activate(context: vscode.ExtensionContext) {
     const agentModelOverrides = {
       codex: config.get<string>('ai.agentCodexModel', '').trim(),
       gemini: '',
-      opencode: '',
+      opencode: config.get<string>('ai.agentOpencodeModel', '').trim(),
+    };
+    const agentVariantOverrides = {
+      codex: '',
+      gemini: '',
+      opencode: config.get<string>('ai.agentOpencodeVariant', '').trim(),
     };
     logger.info('AI agent review configuration', {
       enabled: aiReviewEnabled,
@@ -277,6 +282,8 @@ export async function activate(context: vscode.ExtensionContext) {
         opencode: {
           enabled: enabledAgentBackends.includes('opencode'),
           ...(agentBinaryPaths.opencode ? { binaryPath: agentBinaryPaths.opencode } : {}),
+          ...(agentModelOverrides.opencode ? { model: agentModelOverrides.opencode } : {}),
+          ...(agentVariantOverrides.opencode ? { variant: agentVariantOverrides.opencode } : {}),
         },
       },
       onAuthFailure: (backend) => {
