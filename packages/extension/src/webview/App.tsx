@@ -281,6 +281,8 @@ const App = () => {
     const [debugPhase, setDebugPhase] = useState('');
     const [lastScanSpecialists, setLastScanSpecialists] = useState<Array<{ name: string; focus: string }>>([]);
     const [agentLogs, setAgentLogs] = useState<string[]>([]);
+    const [rateLimitWarning, setRateLimitWarning] = useState<{ message: string; backend?: string; sessionId?: string } | null>(null);
+    const [scanIncomplete, setScanIncomplete] = useState(false);
 
     useEffect(() => {
         vscode.setState({
@@ -304,6 +306,8 @@ const App = () => {
                     setBatchProgress(null);
                     setDebugSteps([]);
                     setAgentLogs([]);
+                    setRateLimitWarning(null);
+                    setScanIncomplete(false);
                     break;
                 case 'scanComplete':
                     setIssues(message.issues);
@@ -329,6 +333,9 @@ const App = () => {
                     break;
                 case 'scanStatus':
                     setScanStatus(message);
+                    if (message.errorCategory === 'rate-limit') {
+                        setRateLimitWarning({ message: message.message, backend: message.backend, sessionId: message.sessionId });
+                    }
                     if (message.agentLog) {
                         setAgentLogs(prev => [...prev.slice(-199), message.agentLog!]);
                     } else {
@@ -350,6 +357,9 @@ const App = () => {
                     }
                     if (message.phase === 'agent-specialists' && message.agents && message.agents.length > 0) {
                         setLastScanSpecialists(message.agents.map(name => ({ name, focus: '' })));
+                    }
+                    if (message.phase === 'degraded' || message.phase === 'complete') {
+                        setScanIncomplete(message.phase === 'degraded');
                     }
                     break;
                 case 'configurationState':
@@ -876,6 +886,70 @@ const App = () => {
                         {error && (
                             <div className="bb-error-wrap">
                                 <ErrorCard error={error} onRetry={startScan} />
+                            </div>
+                        )}
+
+                        {rateLimitWarning && (
+                            <div className="bb-rate-limit-banner" style={{
+                                padding: '12px',
+                                marginBottom: '12px',
+                                borderRadius: '8px',
+                                background: 'color-mix(in srgb, var(--bb-color-warning) 12%, var(--bb-color-panel))',
+                                border: '1px solid var(--bb-color-warning)',
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                                    <Icon name="alert" />
+                                    <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--bb-color-warning)' }}>Rate Limit Hit</span>
+                                </div>
+                                <p style={{ fontSize: '12px', color: 'var(--bb-color-foreground)', margin: '0 0 10px 0' }}>
+                                    {rateLimitWarning.message}
+                                </p>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button
+                                        className="bb-small-button"
+                                        onClick={() => {
+                                            vscode.postMessage({ type: 'requestScan', target: selectedTargetRef.current });
+                                            setRateLimitWarning(null);
+                                        }}
+                                        disabled={loading}
+                                        style={{ fontWeight: 500 }}
+                                    >
+                                        Continue
+                                    </button>
+                                    <button
+                                        className="bb-small-button"
+                                        onClick={() => setRateLimitWarning(null)}
+                                        style={{ fontWeight: 500 }}
+                                    >
+                                        Dismiss
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {scanIncomplete && !rateLimitWarning && !error && !loading && (
+                            <div className="bb-rate-limit-banner" style={{
+                                padding: '10px 12px',
+                                marginBottom: '12px',
+                                borderRadius: '8px',
+                                background: 'color-mix(in srgb, var(--bb-color-warning) 10%, var(--bb-color-panel))',
+                                border: '1px solid var(--bb-color-warning)',
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                                    <Icon name="alert" />
+                                    <span style={{ fontWeight: 600, fontSize: '12px', color: 'var(--bb-color-warning)' }}>Scan Incomplete</span>
+                                </div>
+                                <p style={{ fontSize: '11px', color: 'var(--bb-color-muted)', margin: '0 0 8px 0' }}>
+                                    Some agent reviews were interrupted or timed out. Results may be incomplete.
+                                </p>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button className="bb-small-button" onClick={startScan} disabled={loading} style={{ fontWeight: 500 }}>
+                                        Retry
+                                    </button>
+                                    <button className="bb-small-button" onClick={() => setScanIncomplete(false)} style={{ fontWeight: 500 }}>
+                                        Dismiss
+                                    </button>
+                                </div>
                             </div>
                         )}
 

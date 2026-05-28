@@ -158,6 +158,10 @@ export interface SecurityScanStatusUpdate {
     agents?: string[];
     /** Real-time log line from the agent CLI (e.g. opencode progress messages) */
     agentLog?: string;
+    /** Error category for rate-limit, auth, network failures */
+    errorCategory?: 'auth' | 'rate-limit' | 'network' | 'filesystem' | 'unknown';
+    /** Session ID for resuming interrupted CLI agent sessions */
+    sessionId?: string | undefined;
 }
 
 export interface SecurityScanner {

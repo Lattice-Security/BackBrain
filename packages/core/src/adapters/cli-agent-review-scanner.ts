@@ -648,14 +648,45 @@ export class CliAgentReviewScanner implements SecurityScanner {
         try {
             return await this.runSpecialist(specialist, backend, context);
         } catch (error) {
+            const execError = error as ExecLikeError;
             const reason = toError(error).message.startsWith('Inactivity') ? 'inactivity' : 'timeout/error';
+
+            // Classify the error to determine if it's a rate-limit, auth, etc.
+            const diagnostics = this.classifyBackendFailure(backend.id, execError);
+
             logger.warn(`Specialist skipped — ${reason}`, {
                 roleName: specialist.name,
+                diagnostics,
                 error: toError(error),
             });
+
+            // Emit a degraded status with error category for rate-limit/auth
+            const sessionId = this.extractSessionId(execError) ?? undefined;
+            const statusUpdate: SecurityScanStatusUpdate = {
+                phase: 'degraded',
+                level: 'warn',
+                message: `Specialist "${specialist.name}" on ${backend.id} failed: ${diagnostics.hint}`,
+                backend: backend.id,
+                degraded: true,
+            };
+            if (diagnostics.category) {
+                (statusUpdate as any).errorCategory = diagnostics.category;
+            }
+            if (sessionId) {
+                (statusUpdate as any).sessionId = sessionId;
+            }
+            this.reportStatus(context, statusUpdate);
+
             timedOutSpecialists.push(specialist.name);
             return { roleName: specialist.name, backend: backend.id, findings: [] };
         }
+    }
+
+    private extractSessionId(error: ExecLikeError): string | undefined {
+        const text = [error.message, error.stderr, error.stdout].filter(Boolean).join('\n');
+        // Look for session ID patterns in opencode/codex output
+        const match = text.match(/session[_\s]*[iI][dD]["\s:=]+(\S+)/);
+        return match?.[1];
     }
 
     private reportStatus(context: SecurityScanContext, update: SecurityScanStatusUpdate): void {

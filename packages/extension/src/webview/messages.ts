@@ -70,7 +70,7 @@ export type ExtensionMessage =
     | { type: 'scanComplete'; issues: IssueData[] }
     | { type: 'scanError'; error: string }
     | { type: 'statusUpdate'; level: 'info' | 'warn' | 'error'; message: string }
-    | { type: 'scanStatus'; phase: SecurityScanPhase; level: 'info' | 'warn' | 'error'; message: string; backend?: string; scanner?: string; degraded?: boolean; agents?: string[]; agentLog?: string }
+    | { type: 'scanStatus'; phase: SecurityScanPhase; level: 'info' | 'warn' | 'error'; message: string; backend?: string; scanner?: string; degraded?: boolean; agents?: string[]; agentLog?: string; errorCategory?: string; sessionId?: string }
     | { type: 'statusClear' }
     | { type: 'configurationState'; state: ConfigurationState }
     | { type: 'issuesUpdated'; issues: IssueData[]; batchInfo?: { current: number; total: number } }
