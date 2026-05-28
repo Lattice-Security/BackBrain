@@ -40,3 +40,7 @@ coverage/
 !docs/**/SECURITY_WORK_HANDOFF.md
 !docs/**/rule.json
 
+# 7. Re-ignore runtime scan data
+.backbrain/
+packages/cli/src/.backbrain/
+
