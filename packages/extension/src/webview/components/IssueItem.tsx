@@ -16,7 +16,7 @@ function getSourceChipClass(sourceType?: string): string {
 }
 
 function getSourceChipLabel(sourceType?: string): string | null {
-    if (sourceType === 'agent-grounded') return 'ai grounded';
+    if (sourceType === 'agent-grounded') return 'deterministic + AI confirmed';
     if (sourceType === 'agent-only') return 'ai review';
     if (sourceType === 'deterministic') return 'deterministic';
     return null;

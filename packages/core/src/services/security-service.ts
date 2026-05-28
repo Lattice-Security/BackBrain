@@ -210,15 +210,20 @@ function mergeSourceType(
     left?: IssueSourceType,
     right?: IssueSourceType,
 ): IssueSourceType | undefined {
-    const sourceTypes = [left, right];
-    if (sourceTypes.includes('deterministic')) {
-        return 'deterministic';
-    }
-    if (sourceTypes.includes('agent-grounded')) {
+    const has = (t: IssueSourceType) => left === t || right === t;
+
+    // Both deterministic + agent → AI-confirmed
+    if (has('deterministic') && (has('agent-grounded') || has('agent-only'))) {
         return 'agent-grounded';
     }
-    if (sourceTypes.includes('agent-only')) {
+    if (has('agent-grounded')) {
+        return 'agent-grounded';
+    }
+    if (has('agent-only')) {
         return 'agent-only';
+    }
+    if (has('deterministic')) {
+        return 'deterministic';
     }
     return undefined;
 }
