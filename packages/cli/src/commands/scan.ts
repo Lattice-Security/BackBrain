@@ -15,8 +15,10 @@ import {
     FixSessionStore,
     NodeFilesystem,
     providerRegistry,
+    resolveScanDepthConfig,
     type SecurityScanStatusUpdate,
     type ScanRecord,
+    type AgentScanDepth,
 } from '@backbrain/core';
 import { createScanners } from '../scanner/cli-setup';
 
@@ -36,6 +38,14 @@ export interface ScanArgs {
     commit: boolean;
     opencodeModel?: string | undefined;
     opencodeVariant?: string | undefined;
+    depth?: AgentScanDepth | undefined;
+    agentBackends?: string[] | undefined;
+    preferredBackend?: string | undefined;
+    reviewScope?: 'workspace' | 'changed-files' | 'both' | undefined;
+    maxSpecialists?: number | undefined;
+    concurrency?: number | undefined;
+    file?: string | undefined;
+    custom?: string[] | undefined;
 }
 
 const EXCLUDED_DIRECTORIES = new Set([
@@ -58,16 +68,30 @@ export async function scanCommand(args: ScanArgs): Promise<number> {
 
     const store = new ScanResultStore(root);
     const logFile = new FileLogOutput(path.join(store.basePath, 'scan-log.jsonl'));
-    addLoggerOutput(logFile.handler);
+
+    if (args.json) {
+        // In JSON mode, suppress console logging — only write to file
+        configureLogger(args.verbose ? LOG_LEVELS.DEBUG : LOG_LEVELS.INFO, [logFile.handler]);
+    } else {
+        addLoggerOutput(logFile.handler);
+    }
 
     const logger = getLogger();
     logger.info('CLI scan started', { root, args });
+
+    const depthConfig = args.depth ? resolveScanDepthConfig(args.depth) : undefined;
 
     const scanners = createScanners({
         noAgent: args.noAgent,
         scannerNames: args.scanners,
         opencodeModel: args.opencodeModel,
         opencodeVariant: args.opencodeVariant,
+        agentBackends: args.agentBackends,
+        preferredBackend: args.preferredBackend as 'codex' | 'gemini' | 'opencode' | undefined,
+        reviewScope: args.reviewScope,
+        maxSpecialists: args.maxSpecialists ?? depthConfig?.maxSpecialists,
+        specialistConcurrency: args.concurrency ?? depthConfig?.concurrency,
+        delayBetweenCallsMs: depthConfig?.delayBetweenCallsMs,
     });
 
     const securityService = new SecurityService(scanners);
@@ -89,7 +113,27 @@ export async function scanCommand(args: ScanArgs): Promise<number> {
 
     let files: string[];
 
-    if (args.changed) {
+    if (args.file) {
+        const resolved = path.resolve(root, args.file);
+        try {
+            await fs.promises.access(resolved);
+            const stat = await fs.promises.stat(resolved);
+            if (!stat.isFile()) {
+                logger.warn(`--file target is not a file: ${resolved}`);
+                console.log(`Error: ${resolved} is not a file.`);
+                return 1;
+            }
+            files = [resolved];
+        } catch {
+            logger.warn(`--file target not found: ${resolved}`);
+            console.log(`Error: file not found: ${resolved}`);
+            return 1;
+        }
+        logger.info(`Single file mode: ${files[0]}`);
+    } else if (args.custom && args.custom.length > 0) {
+        files = await resolveCustomPaths(root, args.custom, supportedExtensions);
+        logger.info(`Custom paths: ${files.length} file(s) found`);
+    } else if (args.changed) {
         files = await getChangedFiles(root, supportedExtensions);
         logger.info(`Changed files: ${files.length}`);
     } else {
@@ -336,4 +380,35 @@ async function getChangedFiles(
     } catch {
         return [];
     }
+}
+
+async function resolveCustomPaths(
+    root: string,
+    rawPaths: string[],
+    extensions: string[],
+): Promise<string[]> {
+    const extSet = new Set(extensions);
+    const result: string[] = [];
+
+    for (const raw of rawPaths) {
+        const resolved = path.resolve(root, raw);
+        let stat: fs.Stats;
+        try {
+            stat = await fs.promises.stat(resolved);
+        } catch {
+            console.warn(`Warning: path not found, skipping: ${resolved}`);
+            continue;
+        }
+
+        if (stat.isFile()) {
+            if (extensions.length === 0 || extSet.has(path.extname(resolved))) {
+                result.push(resolved);
+            }
+        } else if (stat.isDirectory()) {
+            const dirFiles = await walkFiles(resolved, extensions);
+            result.push(...dirFiles);
+        }
+    }
+
+    return result;
 }

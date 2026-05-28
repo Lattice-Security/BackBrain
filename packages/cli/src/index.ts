@@ -2,6 +2,7 @@ import { scanCommand, type ScanArgs } from './commands/scan';
 import { statusCommand } from './commands/status';
 import { historyCommand } from './commands/history';
 import { fixCommand, type FixArgs } from './commands/fix';
+import type { AgentScanDepth } from '@backbrain/core';
 
 function printHelp(): void {
     console.log(`
@@ -17,6 +18,8 @@ Scan options:
   --json              Output full results as JSON to stdout
   --min-severity <s>  Minimum severity (critical|high|medium|low|info)
   --changed           Only scan git-changed files (vs HEAD)
+  --file <path>       Scan a single file
+  --custom <paths>    Scan custom paths, comma-separated
   --dir <path>        Workspace root directory (default: cwd)
   --verbose           Enable debug-level logging
   --no-agent          Skip AI agent review scanners
@@ -27,6 +30,12 @@ Scan options:
   --commit            After scan + fix, git commit if all issues resolved
   --opencode-model <m>  Model override for OpenCode (format: provider/model)
   --opencode-variant <v>  Reasoning effort for OpenCode (high, max, minimal)
+  --depth <tier>      Scan depth: developer|team|security|audit (default: developer)
+  --agent-backends <list>  Comma-separated backends: codex,gemini,opencode
+  --preferred-backend <id>  Which backend to prioritize (codex|gemini|opencode)
+  --review-scope <scope>  Review scope: workspace|changed-files|both (default: both)
+  --max-specialists <n>  Override tier default for max AI specialists
+  --concurrency <n>   Override tier default for specialist concurrency
 
 Fix options:
   --all               Apply all fixes (including non-autoFixable)
@@ -98,6 +107,36 @@ export async function main(argv: string[]): Promise<void> {
 function parseScanArgs(argv: string[]): ScanArgs {
     const minSev = extractFlag(argv, '--min-severity');
     const scn = extractFlag(argv, '--scanners');
+    const rawBackends = extractFlag(argv, '--agent-backends');
+    const rawCustom = extractFlag(argv, '--custom');
+    const rawMaxSpec = extractFlag(argv, '--max-specialists');
+    const rawConcurrency = extractFlag(argv, '--concurrency');
+    const depthRaw = extractFlag(argv, '--depth');
+    const reviewScopeRaw = extractFlag(argv, '--review-scope');
+    const preferredRaw = extractFlag(argv, '--preferred-backend');
+    const fileRaw = extractFlag(argv, '--file');
+
+    const agentBackends = rawBackends
+        ? rawBackends.split(',').map((s) => s.trim()).filter(Boolean)
+        : undefined;
+
+    const custom = rawCustom
+        ? rawCustom.split(',').map((s) => s.trim()).filter(Boolean)
+        : undefined;
+
+    const validDepths = ['developer', 'team', 'security', 'audit'] as const;
+    const depth = depthRaw && validDepths.includes(depthRaw as any)
+        ? (depthRaw as AgentScanDepth)
+        : undefined;
+
+    const validScopes = ['workspace', 'changed-files', 'both'] as const;
+    const reviewScope = reviewScopeRaw && validScopes.includes(reviewScopeRaw as any)
+        ? (reviewScopeRaw as 'workspace' | 'changed-files' | 'both')
+        : undefined;
+
+    const maxSpecialists = rawMaxSpec ? parseInt(rawMaxSpec, 10) : undefined;
+    const concurrency = rawConcurrency ? parseInt(rawConcurrency, 10) : undefined;
+
     return {
         dir: extractFlag(argv, '--dir') || process.cwd(),
         json: argv.includes('--json'),
@@ -114,6 +153,14 @@ function parseScanArgs(argv: string[]): ScanArgs {
         commit: argv.includes('--commit'),
         opencodeModel: extractFlag(argv, '--opencode-model') ?? undefined,
         opencodeVariant: extractFlag(argv, '--opencode-variant') ?? undefined,
+        depth,
+        agentBackends,
+        preferredBackend: preferredRaw ?? undefined,
+        reviewScope,
+        maxSpecialists: Number.isFinite(maxSpecialists) ? maxSpecialists : undefined,
+        concurrency: Number.isFinite(concurrency) ? concurrency : undefined,
+        file: fileRaw ?? undefined,
+        custom,
     };
 }
 
