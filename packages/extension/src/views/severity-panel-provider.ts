@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { createLogger, ScanResultStore, type SecurityScanStatusUpdate, type SecurityService } from '@backbrain/core';
+import { createLogger, ScanResultStore, VisualizerService, type SecurityScanStatusUpdate, type SecurityService, type FileSystem, type SecurityIssue, type FileGraph, type WorkflowGraph } from '@backbrain/core';
 import {
     type AgentBackendId,
     type AgentScanDepth,
@@ -80,10 +80,12 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private _debugPhase = '';
     private _selectedCustomPaths: string[] | null = null;
     private _selectedCustomDisplayNames: string[] = [];
+    private _visualizerService = new VisualizerService();
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
         private readonly _securityService: SecurityService,
+        private readonly _fileSystem: FileSystem,
     ) { }
 
     /**
@@ -435,6 +437,10 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                         this._debugSteps = [];
                         this._debugPhase = '';
                     }
+                    break;
+
+                case 'requestGraphData':
+                    await this._handleRequestGraphData(message.paths);
                     break;
             }
         });
@@ -816,6 +822,61 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             this._addDebugStep('complete', 'Done', 'done', 'Nothing to run — all scanners skipped or unavailable');
         } else {
             this._addDebugStep('complete', 'Done', 'done', `${availableCount} scanner(s) available`);
+        }
+    }
+
+    /**
+     * Handle graph data request from the Visualizer webview tab
+     */
+    private async _handleRequestGraphData(paths?: string[]): Promise<void> {
+        this._postMessage({ type: 'graphData', fileGraph: { nodes: [], edges: [] }, workflowGraph: { id: '', name: '', steps: [], connections: [] }, status: 'loading' });
+
+        try {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders?.length) {
+                throw new Error('No workspace folder open');
+            }
+            const rootPath = workspaceFolders[0].uri.fsPath;
+
+            // Use provided paths, or fall back to issue file paths, or scan paths
+            const scanPaths = paths?.length
+                ? paths
+                : this._issues.length > 0
+                    ? [...new Set(this._issues.map(i => i.filePath))]
+                    : await this._resolveScanPaths('workspace') ?? [];
+
+            if (scanPaths.length === 0) {
+                throw new Error('No files available for graph generation');
+            }
+
+            const fileGraph = await this._visualizerService.generateFileGraph(
+                scanPaths, this._fileSystem, rootPath,
+            );
+
+            // Convert IssueData[] to SecurityIssue-like objects for the workflow graph
+            const issues: SecurityIssue[] = this._issues.map(i => ({
+                ruleId: i.id,
+                title: i.title,
+                description: i.description,
+                severity: i.severity as SecurityIssue['severity'],
+                filePath: i.filePath,
+                line: i.line,
+                snippet: i.snippet,
+            }));
+
+            const workflowGraph = await this._visualizerService.generateWorkflowGraph(
+                scanPaths, this._fileSystem, issues,
+            );
+
+            this._postMessage({ type: 'graphData', fileGraph, workflowGraph, status: 'ready' });
+        } catch (error) {
+            logger.error('Failed to generate graph data', { error });
+            this._postMessage({
+                type: 'graphData',
+                fileGraph: { nodes: [], edges: [] },
+                workflowGraph: { id: '', name: '', steps: [], connections: [] },
+                status: 'error',
+            });
         }
     }
 

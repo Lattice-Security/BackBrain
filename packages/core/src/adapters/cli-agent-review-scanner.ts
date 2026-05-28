@@ -1113,7 +1113,37 @@ export class CliAgentReviewScanner implements SecurityScanner {
             }
         }
 
+        if (backend === 'opencode') {
+            const codexText = this.extractOpencodeText(trimmed);
+            if (codexText) return codexText;
+        }
+
         return trimmed;
+    }
+
+    /**
+     * Parse opencode's --format json NDJSON output and extract the assistant's
+     * text from the last `type: "text"` event.
+     *
+     * The NDJSON stream looks like:
+     *   {"type":"step_start",…}
+     *   {"type":"text",…,"text":"{\"ready\":true}"}
+     *   {"type":"step_finish",…}
+     *
+     * Returns the text content, or empty string if no text event is found.
+     */
+    private extractOpencodeText(ndjson: string): string {
+        for (const line of ndjson.split('\n')) {
+            try {
+                const event = JSON.parse(line);
+                if (event.type === 'text' && typeof event.part?.text === 'string') {
+                    return event.part.text;
+                }
+            } catch {
+                // Skip unparseable lines
+            }
+        }
+        return '';
     }
 
     private extractJson(output: string): unknown {

@@ -416,7 +416,7 @@ export async function activate(context: vscode.ExtensionContext) {
     let panelInitialized = false;
 
     // Initialize Severity Panel Provider
-    const severityPanelProvider = new SeverityPanelProvider(context.extensionUri, securityService);
+    const severityPanelProvider = new SeverityPanelProvider(context.extensionUri, securityService, fileSystem);
     severityPanelProvider.setScanDepthTier(tierConfig.label);
     const applyAgentReviewConfiguration = () => {
       const latestConfig = vscode.workspace.getConfiguration('backbrain');
