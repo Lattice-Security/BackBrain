@@ -632,6 +632,9 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     }
 
     private async _scanPaths(scanQueue: string[], target: ScanTarget): Promise<void> {
+        // Filter out any paths inside node_modules that may have slipped through
+        scanQueue = scanQueue.filter(p => !p.includes('/node_modules/') && !p.includes('\\node_modules\\'));
+
         this._isScanning = true;
         this._lastScanError = null;
         this._lastBatchProgress = null;

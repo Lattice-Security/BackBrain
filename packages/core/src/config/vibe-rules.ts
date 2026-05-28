@@ -26,7 +26,7 @@ export const DEFAULT_VIBE_RULES: VibeRule[] = [
         title: 'Deprecated API',
         description: 'Use of deprecated React lifecycle methods',
         severity: 'medium',
-        pattern: /componentWillMount|componentWillReceiveProps|componentWillUpdate/g,
+        pattern: 'componentWillMount|componentWillReceiveProps|componentWillUpdate',
         type: 'regex',
     },
 ];

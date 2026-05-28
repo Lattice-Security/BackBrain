@@ -51,6 +51,11 @@ export class VibeCodeScanner implements SecurityScanner {
       return issues;
     }
 
+    // Skip test files — intentionally contain vulnerable patterns
+    if (/\/tests?\//.test(filePath) || /\.(test|spec)\.(ts|js|tsx|jsx)$/.test(filePath)) {
+      return issues;
+    }
+
     const lines = content.split('\n');
 
     // Strip comments from content so JSDoc code examples are not
