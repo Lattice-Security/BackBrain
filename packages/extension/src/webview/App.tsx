@@ -206,7 +206,7 @@ const LOG_KIND_PREFIX_STYLES: Record<LogLineKind, React.CSSProperties> = {
     plain:    {},
 };
 
-const OpenCodeTerminal: React.FC<{ logs: string[]; backend?: string }> = ({ logs, backend = 'opencode' }) => {
+const OpenCodeTerminal: React.FC<{ logs: string[]; backend?: string }> = ({ logs }) => {
     const containerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -221,7 +221,7 @@ const OpenCodeTerminal: React.FC<{ logs: string[]; backend?: string }> = ({ logs
                 <span className="bb-terminal-dot bb-terminal-dot--red" />
                 <span className="bb-terminal-dot bb-terminal-dot--yellow" />
                 <span className="bb-terminal-dot bb-terminal-dot--green" />
-                <span className="bb-terminal-title">{backend}</span>
+                <span className="bb-terminal-title">Agent Output</span>
                 <span className="bb-terminal-count">{logs.length}</span>
             </div>
             <div ref={containerRef} className="bb-terminal-body">
@@ -333,15 +333,14 @@ const App = () => {
                         setAgentLogs(prev => [...prev.slice(-199), message.agentLog!]);
                     } else {
                         setAgentLogs(prev => {
-                            const b = message.backend || 'opencode';
                             const phaseLines: Record<string, string> = {
-                                'deterministic':    `${b}: running deterministic scanners`,
-                                'agent-planner':    `${b}: planner running`,
-                                'agent-specialists':`${b}: specialist agents reviewing code`,
-                                'agent-aggregator': `${b}: aggregating findings`,
-                                'agent-verification':`${b}: verifying findings`,
-                                'degraded':         `${b}: completed with warnings`,
-                                'complete':         `${b}: complete`,
+                                'deterministic':    'running deterministic scanners',
+                                'agent-planner':    'planner running',
+                                'agent-specialists':'specialist agents reviewing code',
+                                'agent-aggregator': 'aggregating findings',
+                                'agent-verification':'verifying findings',
+                                'degraded':         'completed with warnings',
+                                'complete':         'complete',
                             };
                             const synthetic = phaseLines[message.phase];
                             if (!synthetic) return prev;
@@ -650,7 +649,7 @@ const App = () => {
 
                         {loading && configuration.agentReviewEnabled && (
                             <section className="bb-terminal-section">
-                                <OpenCodeTerminal logs={agentLogs} backend={scanStatus?.backend || 'opencode'} />
+                                <OpenCodeTerminal logs={agentLogs} />
                             </section>
                         )}
 
