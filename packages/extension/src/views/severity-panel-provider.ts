@@ -1329,21 +1329,22 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
             "frame-src 'none'"
         ].join('; ');
 
-        // 3. Disable Service Workers to prevent "InvalidStateError"
-        const disableSwScript = `
+        // 3. Shim missing browser APIs (service workers, clipboard) in webview context
+        const shimScript = `
         <script nonce="${nonce}">
             (function() {
+                // Disable Service Workers
                 try {
                     const noop = () => {};
                     const reject = () => Promise.reject(new Error('ServiceWorkers disabled in Webview'));
                     
-                    const swShim = {
+                    var swShim = {
                         register: reject,
-                        getRegistration: () => Promise.resolve(undefined),
-                        getRegistrations: () => Promise.resolve([]),
+                        getRegistration: function() { return Promise.resolve(undefined); },
+                        getRegistrations: function() { return Promise.resolve([]); },
                         addEventListener: noop,
                         removeEventListener: noop,
-                        dispatchEvent: () => true,
+                        dispatchEvent: function() { return true; },
                         oncontrollerchange: null,
                         onmessage: null,
                         onmessageerror: null,
@@ -1357,15 +1358,43 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                         writable: false,
                         enumerable: true
                     });
-
-                    console.log('BackBrain: ServiceWorker registration disabled');
                 } catch (e) {
                     console.warn('BackBrain: Failed to shim navigator.serviceWorker:', e);
+                }
+
+                // Shim navigator.clipboard (not available in VS Code webviews)
+                try {
+                    if (!navigator.clipboard) {
+                        var clipboardShim = {
+                            readText: function() { return Promise.reject(new Error('clipboard.readText not available in webview')); },
+                            writeText: function(text) {
+                                var ta = document.createElement('textarea');
+                                ta.value = text;
+                                ta.style.position = 'fixed';
+                                ta.style.opacity = '0';
+                                document.body.appendChild(ta);
+                                ta.select();
+                                try { document.execCommand('copy'); } catch(e) {}
+                                document.body.removeChild(ta);
+                                return Promise.resolve();
+                            },
+                            read: function() { return Promise.reject(new Error('clipboard.read not available in webview')); },
+                            write: function() { return Promise.reject(new Error('clipboard.write not available in webview')); },
+                        };
+                        Object.defineProperty(navigator, 'clipboard', {
+                            value: clipboardShim,
+                            configurable: false,
+                            writable: false,
+                            enumerable: true
+                        });
+                    }
+                } catch (e) {
+                    console.warn('BackBrain: Failed to shim navigator.clipboard:', e);
                 }
             })();
         </script>`;
 
-        const headContent = `\n\t\t<meta http-equiv="Content-Security-Policy" content="${csp}">\n\t\t${disableSwScript}`;
+        const headContent = `\n\t\t<meta http-equiv="Content-Security-Policy" content="${csp}">\n\t\t${shimScript}`;
 
         if (/<head[^>]*>/i.test(html)) {
             html = html.replace(/(<head[^>]*>)/i, `$1${headContent}`);
