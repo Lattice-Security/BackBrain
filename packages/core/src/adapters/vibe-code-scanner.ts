@@ -297,9 +297,21 @@ export class VibeCodeScanner implements SecurityScanner {
       return issues;
     }
 
+    // Skip TypeScript declaration files — they contain type-only imports
+    // for @types/* packages that are not runtime dependencies.
+    if (/\.d\.(ts|tsx)$/.test(filePath)) {
+      return issues;
+    }
+
+    // Strip multi-line comments (including JSDoc) and single-line comments
+    // so code examples inside JSDoc blocks are not parsed as real imports.
+    const cleanedContent = content
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+
     // Extract all imports
     const importLines: { module: string; line: number; snippet: string }[] = [];
-    const lines = content.split('\n');
+    const lines = cleanedContent.split('\n');
 
     // Match ES6 imports and require statements
     const importPatterns = [
@@ -316,6 +328,9 @@ export class VibeCodeScanner implements SecurityScanner {
           // Skip relative imports and built-ins
           if (moduleName.startsWith('.') || moduleName.startsWith('/')) continue;
           if (NODE_BUILTINS.has(moduleName)) continue;
+          // Also skip Node sub-path exports (e.g. path/posix, fs/promises, stream/web)
+          const topLevel = moduleName.split('/')[0];
+          if (NODE_BUILTINS.has(topLevel) || NODE_BUILTINS.has(`node:${topLevel}`)) continue;
 
           // Get the package name (handle scoped packages like @org/pkg)
           let pkgName: string;

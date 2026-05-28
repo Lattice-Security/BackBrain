@@ -64,6 +64,20 @@ export async function scanFileCommand(ctx: CommandContext, uri?: vscode.Uri, opt
   }
 
   const filePath = targetUri.fsPath;
+
+  // Skip TypeScript declaration files — they only contain type information
+  if (filePath.endsWith('.d.ts') || filePath.endsWith('.d.tsx')) {
+    logger.debug('Skipping .d.ts file', { filePath });
+    return;
+  }
+
+  // Skip files inside node_modules
+  const sep = nodePath.sep;
+  if (filePath.includes(`${sep}node_modules${sep}`) || filePath.startsWith(`node_modules${sep}`)) {
+    logger.debug('Skipping file inside node_modules', { filePath });
+    return;
+  }
+
   logger.info('Scanning file', { filePath });
 
   const existingScan = inFlightFileScans.get(filePath);
