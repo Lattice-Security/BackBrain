@@ -29,7 +29,10 @@ export interface FixArgs {
 export async function fixCommand(args: FixArgs): Promise<number> {
     const root = path.resolve(args.dir);
 
-    if (args.verbose) {
+    if (args.json) {
+        // In JSON mode, suppress console logging
+        configureLogger(args.verbose ? LOG_LEVELS.DEBUG : LOG_LEVELS.INFO, []);
+    } else if (args.verbose) {
         configureLogger(LOG_LEVELS.DEBUG);
     }
 
