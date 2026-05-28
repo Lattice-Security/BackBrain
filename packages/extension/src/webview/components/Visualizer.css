@@ -191,20 +191,30 @@
 }
 
 .bb-vis-node-title {
-    font-size: 10px;
-    font-weight: var(--bb-font-weight-medium);
+    font-size: 12px;
+    font-weight: var(--bb-font-weight-semibold);
     color: var(--bb-color-foreground);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.bb-vis-node-subtitle {
+.bb-vis-node-filepath {
+    font-size: 9px;
+    color: var(--bb-color-subtle);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 1px;
+}
+
+.bb-vis-node-lang {
     font-size: 8px;
     color: var(--bb-color-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    margin-top: 1px;
 }
 
 .bb-vis-node-badge {
@@ -355,6 +365,16 @@
     justify-content: center;
     flex: 1;
     gap: 10px;
+}
+
+.bb-visualizer-container--fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 10000;
+    background: var(--bb-color-panel);
 }
 
 .bb-vis-error-wrap {

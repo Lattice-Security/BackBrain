@@ -22,6 +22,7 @@ export function Visualizer({ issues }: VisualizerProps) {
     
     const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const [isFullscreen, setIsFullscreen] = useState(false);
 
     const viewportRef = useRef<HTMLDivElement>(null);
     const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -30,7 +31,7 @@ export function Visualizer({ issues }: VisualizerProps) {
     
     // Node width/height constants for midpoint calculation
     const NODE_WIDTH = 150;
-    const NODE_HEIGHT = 45;
+    const NODE_HEIGHT = 62;
 
     // Load graph data on mount and active graph type change
     useEffect(() => {
@@ -248,7 +249,7 @@ export function Visualizer({ issues }: VisualizerProps) {
     const selectedDetails = getSelectedNodeDetails();
 
     return (
-        <div className="bb-visualizer-container">
+        <div className={`bb-visualizer-container${isFullscreen ? ' bb-visualizer-container--fullscreen' : ''}`}>
             <div className="bb-vis-toolbar">
                 <div className="bb-vis-btn-group">
                     <button 
@@ -276,6 +277,9 @@ export function Visualizer({ issues }: VisualizerProps) {
                     <button className="bb-vis-action-btn" onClick={handleZoomOut} title="Zoom Out">-</button>
                     <button className="bb-vis-action-btn" onClick={handleZoomReset} title="Reset view">Reset</button>
                     <button className="bb-vis-action-btn" onClick={requestGraph} title="Reload graph">Reload</button>
+                    <button className="bb-vis-action-btn" onClick={() => setIsFullscreen(f => !f)} title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
+                        {isFullscreen ? '⊠' : '⛶'}
+                    </button>
                 </div>
             </div>
 
@@ -381,14 +385,15 @@ export function Visualizer({ issues }: VisualizerProps) {
                                         onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
                                     >
                                         <div className="bb-vis-node-header">
-                                            <span className="bb-vis-node-title" title={node.fileName}>{node.fileName}</span>
+                                            <span className="bb-vis-node-title" title={node.fileName}>{node.fileName.split('/').pop() || node.fileName}</span>
                                             {issueStats.total > 0 && (
                                                 <span className={`bb-vis-node-badge bb-vis-node-badge--${issueStats.critical > 0 ? 'critical' : 'high'}`}>
                                                     {issueStats.total}
                                                 </span>
                                             )}
                                         </div>
-                                        <div className="bb-vis-node-subtitle">{node.language}</div>
+                                        <div className="bb-vis-node-filepath" title={node.filePath}>{node.fileName}</div>
+                                        <div className="bb-vis-node-lang">{node.language}</div>
                                     </div>
                                 );
                             })
