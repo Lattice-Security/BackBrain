@@ -173,7 +173,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         this.aggregatorTimeoutMs = options.aggregatorTimeoutMs ?? 60_000;
         this.totalScanTimeoutMs = options.totalScanTimeoutMs ?? 600_000;
         this.inactivityTimeoutMs = options.inactivityTimeoutMs ?? 30_000;
-        this.inactivityOverrides = { gemini: 120_000 };
+        this.inactivityOverrides = { gemini: 120_000, opencode: 120_000 };
         this.backends = {
             codex: {
                 enabled: true,
@@ -826,6 +826,16 @@ export class CliAgentReviewScanner implements SecurityScanner {
                     hint: `${id} is not installed or is not runnable from PATH.`,
                 },
             };
+            this.readinessCache.set(id, state);
+            return state;
+        }
+
+        // Opencode's readiness is proven by the binary check above. The model
+        // probe would waste 60-180 s waiting for the DeepSeek API to respond,
+        // and opencode may not flush any stdout until the full response is
+        // buffered — causing a spurious probe failure.
+        if (id === 'opencode') {
+            const state: BackendReadinessState = { ready: true };
             this.readinessCache.set(id, state);
             return state;
         }
