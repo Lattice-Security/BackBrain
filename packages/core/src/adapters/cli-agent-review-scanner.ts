@@ -150,6 +150,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
     private readonly aggregatorTimeoutMs: number;
     private readonly totalScanTimeoutMs: number;
     private readonly inactivityTimeoutMs: number;
+    private readonly inactivityOverrides: Partial<Record<AgentBackendId, number>>;
     /**
      * Readiness cache — only stores outcomes that are stable across a session:
      *   ready: true  (including rate-limited)  → cached permanently
@@ -172,6 +173,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         this.aggregatorTimeoutMs = options.aggregatorTimeoutMs ?? 60_000;
         this.totalScanTimeoutMs = options.totalScanTimeoutMs ?? 600_000;
         this.inactivityTimeoutMs = options.inactivityTimeoutMs ?? 30_000;
+        this.inactivityOverrides = { gemini: 120_000 };
         this.backends = {
             codex: {
                 enabled: true,
@@ -340,10 +342,14 @@ export class CliAgentReviewScanner implements SecurityScanner {
         let planner: PlannerOutput;
         try {
             const plannerRaw = await this.runBackend(
-                leadBackend, plannerPrompt, repositoryRoot,
+                availableBackends, plannerPrompt, repositoryRoot,
                 this.plannerTimeoutMs, 'planner',
             );
-            planner = plannerSchema.parse(this.extractJson(plannerRaw));
+            try {
+                planner = plannerSchema.parse(this.extractJson(plannerRaw));
+            } catch {
+                planner = plannerSchema.parse(this.extractJsonAggressive(plannerRaw));
+            }
         } catch (error) {
             logger.warn('Planner failed or timed out — aborting agent scan', { error: toError(error) });
             this.reportStatus(context, {
@@ -473,7 +479,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         });
         try {
             const aggregatorRaw = await this.runBackend(
-                leadBackend, aggregatorPrompt, repositoryRoot,
+                availableBackends, aggregatorPrompt, repositoryRoot,
                 this.aggregatorTimeoutMs, 'aggregator',
             );
 
@@ -617,10 +623,15 @@ export class CliAgentReviewScanner implements SecurityScanner {
             changedFiles: context.changedFiles,
         });
         const raw = await this.runBackend(
-            backend, prompt, context.repositoryRoot,
+            [backend], prompt, context.repositoryRoot,
             this.specialistTimeoutMs, `specialist:${specialist.name}`,
         );
-        const parsed = specialistSchema.parse(this.extractJson(raw));
+        let parsed: SpecialistOutput;
+        try {
+            parsed = specialistSchema.parse(this.extractJson(raw));
+        } catch {
+            parsed = specialistSchema.parse(this.extractJsonAggressive(raw));
+        }
         logger.info('Agent review specialist completed', {
             roleName: specialist.name,
             backend: backend.id,
@@ -756,7 +767,13 @@ export class CliAgentReviewScanner implements SecurityScanner {
 
     private async getAvailableBackends(): Promise<Array<{ id: AgentBackendId; config: AgentBackendConfig }>> {
         const candidates = (Object.keys(this.backends) as AgentBackendId[])
-            .filter(id => this.backends[id].enabled);
+            .filter(id => this.backends[id].enabled)
+            .sort((a, b) => {
+                // Probe codex last — it's slow (model mismatch takes ~18s to time out).
+                if (a === 'codex') return 1;
+                if (b === 'codex') return -1;
+                return 0;
+            });
         const available: Array<{ id: AgentBackendId; config: AgentBackendConfig }> = [];
 
         for (const id of candidates) {
@@ -874,8 +891,12 @@ export class CliAgentReviewScanner implements SecurityScanner {
 
         switch (backend.id) {
             case 'codex':
+                return this.runBackend([backend], prompt, cwd, 60_000, 'readiness-probe', {
+                    isReadinessProbe: true,
+                    expectsJsonObject: true,
+                });
             case 'opencode':
-                return this.runBackend(backend, prompt, cwd, 60_000, 'readiness-probe', {
+                return this.runBackend([backend], prompt, cwd, 120_000, 'readiness-probe', {
                     isReadinessProbe: true,
                     expectsJsonObject: true,
                 });
@@ -910,24 +931,27 @@ export class CliAgentReviewScanner implements SecurityScanner {
     }
 
     private async runBackend(
-        backend: { id: AgentBackendId; config: AgentBackendConfig },
+        backends: Array<{ id: AgentBackendId; config: AgentBackendConfig }>,
         prompt: string,
         cwd: string,
         hardCeilingMs: number,
         label: string,
         options: BackendExecutionOptions = {},
+        retryCount = 0,
     ): Promise<string> {
+        const backend = backends[0]!;
         const { binary, args } = this.buildBackendArgs(backend, prompt);
 
         // Readiness probes stay on the old execFile path — they run infrequently,
-        // have their own 60 s ceiling, and don't need inactivity tracking.
+        // have a per-backend ceiling passed via hardCeilingMs, and don't need
+        // inactivity tracking.
         if (options.isReadinessProbe) {
             try {
                 const { stdout } = await this.execFileAsync(binary, args, {
                     cwd,
                     maxBuffer: 20 * 1024 * 1024,
                     env: this.buildExecEnv(backend.id),
-                    timeout: 60_000,
+                    timeout: hardCeilingMs,
                 });
                 return this.normalizeBackendOutput(backend.id, stdout, options);
             } catch (error) {
@@ -944,12 +968,35 @@ export class CliAgentReviewScanner implements SecurityScanner {
         // Real backend calls use the streaming path so we can apply an inactivity
         // timer in addition to the hard ceiling.
         try {
+            const effectiveInactivity = this.inactivityOverrides[backend.id] ?? this.inactivityTimeoutMs;
             const raw = await this.runBackendStreaming(
-                binary, args, cwd, this.buildExecEnv(backend.id), hardCeilingMs, label,
+                binary, args, cwd, this.buildExecEnv(backend.id), hardCeilingMs, effectiveInactivity, label,
             );
             return this.normalizeBackendOutput(backend.id, raw, options);
         } catch (error) {
             const diagnostics = this.classifyBackendFailure(backend.id, error as ExecLikeError);
+
+            // Tier 1: Retry with exponential backoff on rate-limit errors.
+            if (diagnostics.category === 'rate-limit' && retryCount < 3) {
+                const delay = (retryCount + 1) * 5_000;
+                const remaining = hardCeilingMs - delay;
+                if (remaining > 0) {
+                    logger.warn('Rate-limited, retrying', { backend: backend.id, label, retryCount, delayMs: delay });
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    return this.runBackend(backends, prompt, cwd, remaining, label, options, retryCount + 1);
+                }
+            }
+
+            // Tier 2: When retries are exhausted, rotate to the next available backend.
+            if (diagnostics.category === 'rate-limit' && backends.length > 1) {
+                logger.warn('Rate-limited on all retries, rotating to next backend', {
+                    backend: backend.id,
+                    label,
+                    remainingBackends: backends.slice(1).map(b => b.id),
+                });
+                return this.runBackend(backends.slice(1), prompt, cwd, hardCeilingMs, label, options, 0);
+            }
+
             logger.error('Agent backend execution failed', {
                 backend: backend.id,
                 label,
@@ -976,35 +1023,32 @@ export class CliAgentReviewScanner implements SecurityScanner {
         cwd: string,
         env: NodeJS.ProcessEnv,
         hardCeilingMs: number,
+        inactivityTimeoutMs: number,
         label: string,
     ): Promise<string> {
         // Whitelist of allowed commands to prevent command injection
-        const allowedCommands = ['git', 'node', 'npm', 'npx', 'python', 'python3', 'bash', 'sh'];
-        if (!allowedCommands.includes(command)) {
-            throw new Error(`Command '${command}' is not allowed`);
+        const allowedCommands = new Set([
+            'opencode', 'codex', 'gemini',
+            'git', 'node', 'npm', 'npx', 'python', 'python3', 'bash', 'sh',
+        ]);
+        if (!allowedCommands.has(command)) {
+            throw new Error(`Command '${command}' is not in the allowed list.`);
         }
-        // Sanitize args to prevent injection (only allow alphanumeric, dash, underscore, dot, slash)
-        const sanitizedArgs = args.map(arg => {
-            if (/^[a-zA-Z0-9_\-\.\/]+$/.test(arg)) {
-                return arg;
-            }
-            throw new Error(`Invalid argument: ${arg}`);
-        });
         return new Promise<string>((resolve, reject) => {
             const chunks: Buffer[] = [];
             let hardTimer: ReturnType<typeof setTimeout> | undefined;
             let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
 
-            const child = spawn(command, sanitizedArgs, { cwd, env });
+            const child = spawn(command, args, { cwd, env });
 
             const resetInactivity = (): void => {
                 if (inactivityTimer !== undefined) clearTimeout(inactivityTimer);
                 inactivityTimer = setTimeout(() => {
                     child.kill();
                     reject(new Error(
-                        `Inactivity timeout: no output received for ${this.inactivityTimeoutMs}ms (${label})`,
+                        `Inactivity timeout: no output received for ${inactivityTimeoutMs}ms (${label})`,
                     ));
-                }, this.inactivityTimeoutMs);
+                }, inactivityTimeoutMs);
             };
 
             hardTimer = setTimeout(() => {
@@ -1092,6 +1136,17 @@ export class CliAgentReviewScanner implements SecurityScanner {
             ].join('\n\n');
         }
 
+        if (backend === 'gemini') {
+            return [
+                'You are a security analysis agent operating in read-only mode.',
+                'CRITICAL: Return ONLY the JSON object specified below.',
+                'Do NOT add any prose before or after the JSON.',
+                'Do NOT wrap the JSON in markdown code fences.',
+                'Your entire response must be a single valid JSON object.',
+                prompt,
+            ].join('\n\n');
+        }
+
         return prompt;
     }
 
@@ -1124,6 +1179,8 @@ export class CliAgentReviewScanner implements SecurityScanner {
             } catch {
                 // Fall through and let extractJson handle raw output.
             }
+            const geminiText = this.extractGeminiText(trimmed);
+            if (geminiText) return geminiText;
         }
 
         if (backend === 'opencode') {
@@ -1157,6 +1214,27 @@ export class CliAgentReviewScanner implements SecurityScanner {
             }
         }
         return '';
+    }
+
+    /**
+     * Parse Gemini CLI output that may use NDJSON-like streaming events
+     * instead of the single {"response":"..."} envelope. Iterates over
+     * each line, parsing JSON events and collecting text/response fields.
+     * Returns the concatenated result, or empty string if nothing found.
+     */
+    private extractGeminiText(output: string): string {
+        const parts: string[] = [];
+        for (const line of output.split('\n')) {
+            try {
+                const event = JSON.parse(line.trim()) as Record<string, unknown>;
+                if (typeof event.response === 'string') return event.response.trim();
+                if (typeof event.text === 'string') parts.push(event.text as string);
+                if (typeof event.content === 'string') parts.push(event.content as string);
+            } catch {
+                // Skip non-JSON lines
+            }
+        }
+        return parts.join('');
     }
 
     private extractJson(output: string): unknown {
@@ -1300,6 +1378,13 @@ export class CliAgentReviewScanner implements SecurityScanner {
         if (os.platform() === 'darwin') {
             defaultPaths.unshift('/opt/homebrew/bin');
         }
+        // VSCode extension host often strips ~/.local/bin, ~/.opencode/bin,
+        // and other user-local directories from PATH. Add them as fallbacks
+        // so binaries installed via npm/pnpm/pipx/opencode are found.
+        defaultPaths.push(
+            path.join(home, '.opencode', 'bin'),
+            path.join(home, '.local', 'bin'),
+        );
         const currentPath = process.env.PATH || '';
         const pathSeparator = os.platform() === 'win32' ? ';' : ':';
         const combinedPaths = Array.from(new Set([
@@ -1355,7 +1440,8 @@ export class CliAgentReviewScanner implements SecurityScanner {
             normalized.includes('insufficient credits') ||
             normalized.includes("you've hit your usage limit") ||
             normalized.includes('loaded cached credentials') && normalized.includes('login') ||
-            normalized.includes('unauthenticated')
+            normalized.includes('unauthenticated') ||
+            normalized.includes('model is not supported')
         ) {
             return {
                 category: 'auth',
