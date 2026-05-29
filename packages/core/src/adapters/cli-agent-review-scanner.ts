@@ -343,7 +343,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         try {
             const plannerRaw = await this.runBackend(
                 availableBackends, plannerPrompt, repositoryRoot,
-                this.plannerTimeoutMs, 'planner',
+                leadBackend.id === 'opencode' ? this.plannerTimeoutMs * 3 : this.plannerTimeoutMs, 'planner',
             );
             try {
                 planner = plannerSchema.parse(this.extractJson(plannerRaw));
@@ -624,7 +624,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         });
         const raw = await this.runBackend(
             [backend], prompt, context.repositoryRoot,
-            this.specialistTimeoutMs, `specialist:${specialist.name}`,
+            backend.id === 'opencode' ? this.specialistTimeoutMs * 2 : this.specialistTimeoutMs, `specialist:${specialist.name}`,
         );
         let parsed: SpecialistOutput;
         try {
@@ -826,16 +826,6 @@ export class CliAgentReviewScanner implements SecurityScanner {
                     hint: `${id} is not installed or is not runnable from PATH.`,
                 },
             };
-            this.readinessCache.set(id, state);
-            return state;
-        }
-
-        // Opencode's readiness is proven by the binary check above. The model
-        // probe would waste 60-180 s waiting for the DeepSeek API to respond,
-        // and opencode may not flush any stdout until the full response is
-        // buffered — causing a spurious probe failure.
-        if (id === 'opencode') {
-            const state: BackendReadinessState = { ready: true };
             this.readinessCache.set(id, state);
             return state;
         }
