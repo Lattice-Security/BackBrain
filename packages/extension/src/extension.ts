@@ -226,15 +226,26 @@ export async function activate(context: vscode.ExtensionContext) {
       gemini: config.get<string>('ai.agentBinaryPathGemini', '').trim(),
       opencode: config.get<string>('ai.agentBinaryPathOpencode', '').trim(),
     };
-    const agentApiKeys = {
-      groq: config.get<string>('ai.agentGroqApiKey', '').trim(),
-    };
     const agentModelOverrides = {
       codex: config.get<string>('ai.agentCodexModel', '').trim(),
       gemini: '',
       opencode: config.get<string>('ai.agentOpencodeModel', '').trim(),
       groq: config.get<string>('ai.agentGroqModel', '').trim(),
     };
+
+    // Resolve Groq API key: try settings first, then fall back to SecretStorage
+    // (which is set by BackBrain: Set API Key → Groq).
+    let groqApiKey = config.get<string>('ai.agentGroqApiKey', '').trim();
+    let groqKeySource: string;
+    if (groqApiKey) {
+      groqKeySource = 'settings (ai.agentGroqApiKey)';
+    } else {
+      const keyService = getAIKeyService();
+      const secretKey = await keyService.getApiKey('groq');
+      groqApiKey = secretKey || '';
+      groqKeySource = secretKey ? 'SecretStorage' : 'not found';
+    }
+
     logger.info('AI agent review configuration', {
       enabled: aiReviewEnabled,
       backends: enabledAgentBackends,
@@ -244,6 +255,7 @@ export async function activate(context: vscode.ExtensionContext) {
       specialistConcurrency: agentSpecialistConcurrency,
       delayBetweenCallsMs: tierConfig.delayBetweenCallsMs,
       reviewScope: agentReviewScope,
+      groqKeySource,
       binaryPathOverrides: Object.fromEntries(
         Object.entries(agentBinaryPaths).map(([key, value]) => [key, Boolean(value)])
       ),
@@ -285,7 +297,7 @@ export async function activate(context: vscode.ExtensionContext) {
         },
         groq: {
           enabled: enabledAgentBackends.includes('groq'),
-          ...(agentApiKeys.groq ? { apiKey: agentApiKeys.groq } : {}),
+          ...(groqApiKey ? { apiKey: groqApiKey } : {}),
           ...(agentModelOverrides.groq ? { model: agentModelOverrides.groq } : {}),
         },
       },
@@ -441,7 +453,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Initialize Severity Panel Provider
     const severityPanelProvider = new SeverityPanelProvider(context.extensionUri, securityService, fileSystem);
     severityPanelProvider.setScanDepthTier(tierConfig.label);
-    const applyAgentReviewConfiguration = () => {
+    const applyAgentReviewConfiguration = async () => {
       const latestConfig = vscode.workspace.getConfiguration('backbrain');
       const latestDepth = latestConfig.get<AgentScanDepth>('ai.agentScanDepth', 'developer');
       const latestTier = resolveScanDepthConfig(latestDepth);
@@ -459,7 +471,14 @@ export async function activate(context: vscode.ExtensionContext) {
       };
       const latestCodexModel = latestConfig.get<string>('ai.agentCodexModel', '').trim();
       const latestOpencodeModel = latestConfig.get<string>('ai.agentOpencodeModel', '').trim();
-      const latestGroqApiKey = latestConfig.get<string>('ai.agentGroqApiKey', '').trim();
+      let latestGroqApiKey = latestConfig.get<string>('ai.agentGroqApiKey', '').trim();
+      if (!latestGroqApiKey) {
+        const keyService = getAIKeyService();
+        const secretKey = await keyService.getApiKey('groq');
+        if (secretKey) {
+          latestGroqApiKey = secretKey;
+        }
+      }
       const latestGroqModel = latestConfig.get<string>('ai.agentGroqModel', '').trim();
 
       agentReviewScanner.configure({
