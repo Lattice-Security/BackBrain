@@ -208,6 +208,13 @@ export class OSVScanner extends CliScannerBase {
                     return;
                 }
 
+                // Exit 128 with empty stdout = nothing to scan (no lockfiles).
+                // Not a real error — resolve as empty results.
+                if (error && typeof error === 'object' && 'code' in error && error.code === 128) {
+                    resolve('');
+                    return;
+                }
+
                 reject(error);
             });
         });
