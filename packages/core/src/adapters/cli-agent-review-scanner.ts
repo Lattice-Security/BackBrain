@@ -1118,7 +1118,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
                     args: ['--approval-mode', 'plan', '--output-format', 'json', '-p', builtPrompt],
                 };
             case 'opencode': {
-                const args = ['run', '--print-logs', '--format', 'json'];
+                const args = ['run', '--print-logs', '--format', 'json', '--pure'];
                 args.push('-m', backend.config.model || 'opencode/deepseek-v4-flash-free');
                 args.push(builtPrompt);
                 return { binary: backend.config.binaryPath, args };
