@@ -1039,10 +1039,20 @@ export class CliAgentReviewScanner implements SecurityScanner {
         const allowedCommands = new Set([
             'opencode', 'codex', 'gemini',
             'git', 'node', 'npm', 'npx', 'python', 'python3', 'bash', 'sh',
+            'setsid',
         ]);
         if (!allowedCommands.has(command)) {
             throw new Error(`Command '${command}' is not in the allowed list.`);
         }
+
+        // Inside Snap Electron, spawned children inherit a restricted context
+        // that causes opencode to hang after booting. Wrap in setsid to create
+        // a detached session — opencode runs outside the Snap process group.
+        if (command === 'opencode' && process.env.SNAP) {
+            args = ['-w', command, ...args];
+            command = 'setsid';
+        }
+
         return new Promise<string>((resolve, reject) => {
             const chunks: Buffer[] = [];
             let hardTimer: ReturnType<typeof setTimeout> | undefined;
