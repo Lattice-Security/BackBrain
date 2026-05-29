@@ -480,7 +480,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         try {
             const aggregatorRaw = await this.runBackend(
                 availableBackends, aggregatorPrompt, repositoryRoot,
-                this.aggregatorTimeoutMs, 'aggregator',
+                leadBackend.id === 'opencode' ? this.aggregatorTimeoutMs * 3 : this.aggregatorTimeoutMs, 'aggregator',
             );
 
             // Attempt 1: standard extraction + Zod validation.
@@ -1117,11 +1117,12 @@ export class CliAgentReviewScanner implements SecurityScanner {
                     binary: backend.config.binaryPath,
                     args: ['--approval-mode', 'plan', '--output-format', 'json', '-p', builtPrompt],
                 };
-            case 'opencode':
-                return {
-                    binary: backend.config.binaryPath,
-                    args: ['run', '--print-logs', '--format', 'json', builtPrompt],
-                };
+            case 'opencode': {
+                const args = ['run', '--print-logs', '--format', 'json'];
+                args.push('-m', backend.config.model || 'opencode/deepseek-v4-flash-free');
+                args.push(builtPrompt);
+                return { binary: backend.config.binaryPath, args };
+            }
         }
     }
 
@@ -1403,8 +1404,13 @@ export class CliAgentReviewScanner implements SecurityScanner {
         };
 
         if (backend === 'opencode') {
-            env.XDG_CACHE_HOME = env.XDG_CACHE_HOME || path.join(home, '.cache');
-            env.XDG_DATA_HOME = env.XDG_DATA_HOME || path.join(home, '.local', 'share');
+            env.XDG_CACHE_HOME = path.join(home, '.cache');
+            env.XDG_DATA_HOME = path.join(home, '.local', 'share');
+            // Opencode detects SNAP_USER_DATA and uses it as its data root, which
+            // points to ~/snap/code/238/... with a stale DB that selects paid models.
+            // Force it to use the regular home directory so the probe always uses the
+            // built-in free model regardless of Snap context.
+            env.SNAP_USER_DATA = '';
         }
 
         return env;
@@ -1438,8 +1444,12 @@ export class CliAgentReviewScanner implements SecurityScanner {
             normalized.includes('api key expired') ||
             normalized.includes('api_key_invalid') ||
             normalized.includes('insufficient credits') ||
+            normalized.includes('insufficient_quota') ||
             normalized.includes("you've hit your usage limit") ||
             normalized.includes('loaded cached credentials') && normalized.includes('login') ||
+            normalized.includes('401') ||
+            normalized.includes('unauthorized') ||
+            normalized.includes('invalid_api_key') ||
             normalized.includes('unauthenticated') ||
             normalized.includes('model is not supported')
         ) {
@@ -1449,7 +1459,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
             };
         }
 
-        if (normalized.includes('dns error') || normalized.includes('operation not permitted') || normalized.includes('unable to connect') || normalized.includes('failed to fetch') || normalized.includes('timed out') || normalized.includes('timeout')) {
+        if (normalized.includes('dns error') || normalized.includes('operation not permitted') || normalized.includes('unable to connect') || normalized.includes('failed to fetch') || normalized.includes('timed out') || normalized.includes('timeout') || normalized.includes('econnrefused') || normalized.includes('enotfound') || normalized.includes('socket hang up')) {
             return {
                 category: 'network',
                 hint: `${backend} could not reach its backend service or model registry (likely a network issue or timeout).`,
@@ -1460,6 +1470,18 @@ export class CliAgentReviewScanner implements SecurityScanner {
             return {
                 category: 'filesystem',
                 hint: `${backend} could not initialize local runtime state. Check writable cache/data directories.`,
+            };
+        }
+
+        if (
+            normalized.includes('no provider') ||
+            normalized.includes('no model') ||
+            normalized.includes('no valid provider') ||
+            normalized.includes('provider not found')
+        ) {
+            return {
+                category: 'auth',
+                hint: `${backend} has no AI provider configured. Run opencode interactively and use /connect to set up a provider.`,
             };
         }
 

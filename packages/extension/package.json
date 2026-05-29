@@ -250,6 +250,11 @@
           "default": "",
           "description": "Optional Codex model override for AI agent review"
         },
+        "backbrain.ai.agentOpencodeModel": {
+          "type": "string",
+          "default": "",
+          "description": "Optional OpenCode model override for AI agent review"
+        },
         "backbrain.ai.agentBinaryPathGemini": {
           "type": "string",
           "default": "",
