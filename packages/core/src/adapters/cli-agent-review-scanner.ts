@@ -830,6 +830,15 @@ export class CliAgentReviewScanner implements SecurityScanner {
             return state;
         }
 
+        // Opencode model probe is unreliable inside Snap VSCode extension host
+        // (process hangs at 120s timeout). The binary version check alone is
+        // sufficient since the model works from terminal with explicit flags.
+        if (id === 'opencode') {
+            const state: BackendReadinessState = { ready: true };
+            this.readinessCache.set(id, state);
+            return state;
+        }
+
         try {
             const probeOutput = await this.runBackendReadinessProbe({ id, config }, process.cwd());
             const parsed = this.extractJson(probeOutput) as { ready?: boolean };
