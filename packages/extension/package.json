@@ -298,7 +298,7 @@
     }
   },
   "scripts": {
-    "build": "tsup && cp -r src/knowledge dist/knowledge && cp -f ../core/node_modules/web-tree-sitter/tree-sitter.wasm dist/ && cp -f ../core/node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm dist/ && cp -f ../core/node_modules/tree-sitter-typescript/tree-sitter-typescript.wasm dist/ && cp -f ../core/node_modules/tree-sitter-typescript/tree-sitter-tsx.wasm dist/ && bun run build:webview",
+    "build": "tsup && rm -rf dist/knowledge && cp -r src/knowledge dist/knowledge && cp -f ../core/node_modules/web-tree-sitter/tree-sitter.wasm dist/ && cp -f ../core/node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm dist/ && cp -f ../core/node_modules/tree-sitter-typescript/tree-sitter-typescript.wasm dist/ && cp -f ../core/node_modules/tree-sitter-typescript/tree-sitter-tsx.wasm dist/ && bun run build:webview",
     "build:webview": "vite build",
     "watch": "tsup --watch",
     "typecheck": "tsc --noEmit && tsc -p src/webview/tsconfig.json --noEmit"
