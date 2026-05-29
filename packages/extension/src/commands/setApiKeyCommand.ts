@@ -5,13 +5,13 @@
  */
 
 import * as vscode from 'vscode';
-import { createLogger, type SupportedProvider } from '@backbrain/core';
+import { createLogger } from '@backbrain/core';
 import { getAIKeyService } from '../services/ai-key-service';
 import { clearCachedAdapter } from '../services/ai-adapter-factory';
 
 const logger = createLogger('SetApiKeyCommand');
 
-const PROVIDERS: { label: string; id: SupportedProvider }[] = [
+const PROVIDERS: { label: string; id: string }[] = [
     { label: 'OpenAI', id: 'openai' },
     { label: 'Anthropic', id: 'anthropic' },
     { label: 'Google Gemini', id: 'google' },
@@ -19,6 +19,7 @@ const PROVIDERS: { label: string; id: SupportedProvider }[] = [
     { label: 'DeepSeek', id: 'deepseek' },
     { label: 'NVIDIA NIM', id: 'nvidia' },
     { label: 'OpenRouter', id: 'openrouter' },
+    { label: 'Groq', id: 'groq' },
 ];
 
 /**
@@ -77,18 +78,30 @@ export function registerSetApiKeyCommand(_context: vscode.ExtensionContext): vsc
             logger.info(`Stored API key for ${providerId}`);
 
             // Ask if they want to make this the default provider
-            const config = vscode.workspace.getConfiguration('backbrain.ai');
-            const currentProvider = config.get<string>('provider');
+            if (providerId === 'groq') {
+                const groqConfig = vscode.workspace.getConfiguration('backbrain.ai');
+                await groqConfig.update('agentGroqApiKey', apiKey, vscode.ConfigurationTarget.Global);
+                await groqConfig.update('agentPreferredBackend', 'groq', vscode.ConfigurationTarget.Global);
+                const backends = groqConfig.get<string[]>('agentBackends', ['codex', 'gemini', 'opencode']);
+                if (!backends.includes('groq')) {
+                    backends.push('groq');
+                    await groqConfig.update('agentBackends', backends, vscode.ConfigurationTarget.Global);
+                }
+                vscode.window.showInformationMessage('Groq AI agent review configured! Use the Start scan button in the Scan tab.');
+            } else {
+                const config = vscode.workspace.getConfiguration('backbrain.ai');
+                const currentProvider = config.get<string>('provider');
 
-            if (currentProvider !== providerId) {
-                const makeDefault = await vscode.window.showInformationMessage(
-                    `Set ${selection.label} as your active AI provider?`,
-                    'Yes',
-                    'No'
-                );
+                if (currentProvider !== providerId) {
+                    const makeDefault = await vscode.window.showInformationMessage(
+                        `Set ${selection.label} as your active AI provider?`,
+                        'Yes',
+                        'No'
+                    );
 
-                if (makeDefault === 'Yes') {
-                    await config.update('provider', providerId, vscode.ConfigurationTarget.Global);
+                    if (makeDefault === 'Yes') {
+                        await config.update('provider', providerId, vscode.ConfigurationTarget.Global);
+                    }
                 }
             }
 

@@ -84,7 +84,6 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private _debugMode = false;
     private _debugSteps: DebugStep[] = [];
     private _debugPhase = '';
-    private _isApiScan = false;
     private _selectedCustomPaths: string[] | null = null;
     private _selectedCustomDisplayNames: string[] = [];
     private _visualizerService = new VisualizerService();
@@ -182,7 +181,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         const scannerNames = this._getEnabledScannerIds();
         const agentReviewEnabled = config.get<boolean>('ai.agentReviewEnabled', false);
         const enabledAgentBackends = config.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']);
-        if ((agentReviewEnabled && enabledAgentBackends.length > 0) || this._isApiScan) {
+        if (agentReviewEnabled && enabledAgentBackends.length > 0) {
             scannerNames.push('agent-review');
         }
         return scannerNames;
@@ -379,29 +378,6 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                 case 'requestScanFile':
                     await this._handleScanFileRequest();
                     break;
-
-                case 'requestApiScan': {
-                    this._isApiScan = true;
-                    try {
-                        const agentScanner = this._securityService.getScanners().find(s => s.name === 'agent-review');
-                        if (agentScanner && 'configure' in agentScanner) {
-                            (agentScanner as { configure(options: Record<string, unknown>): void }).configure({
-                                preferredBackend: 'groq',
-                                backends: {
-                                    groq: {
-                                        enabled: true,
-                                        apiKey: message.apiKey,
-                                        model: message.model || 'llama-3.3-70b-versatile',
-                                    },
-                                },
-                            });
-                        }
-                        await this._handleScanRequest('workspace');
-                    } finally {
-                        this._isApiScan = false;
-                    }
-                    break;
-                }
 
                 case 'refreshConfiguration':
                     await this.syncConfigurationState(true);

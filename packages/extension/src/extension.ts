@@ -299,20 +299,33 @@ export async function activate(context: vscode.ExtensionContext) {
         authFailureNotified.add(backend);
         logger.warn('Agent backend authentication failure — surfacing user notification', { backend });
 
-        vscode.window.showErrorMessage(
-          `BackBrain: ${backend} is not authenticated. AI agent review is unavailable until you sign in.`,
-          'Login to Gemini',
-          'Reload Window',
-        ).then(choice => {
-          // After the user takes action, clear the guard so a future failure
-          // (e.g. token expires again) is surfaced properly.
-          authFailureNotified.delete(backend);
-          if (choice === 'Login to Gemini') {
-            void vscode.commands.executeCommand('backbrain.loginGemini');
-          } else if (choice === 'Reload Window') {
-            void vscode.commands.executeCommand('workbench.action.reloadWindow');
-          }
-        });
+        if (backend === 'groq') {
+          vscode.window.showErrorMessage(
+            `BackBrain: Groq API key is invalid or expired. Use Ctrl+Shift+P → "BackBrain: Set API Key" to configure a new one.`,
+            'Set Groq API Key',
+            'Reload Window',
+          ).then(choice => {
+            authFailureNotified.delete(backend);
+            if (choice === 'Set Groq API Key') {
+              void vscode.commands.executeCommand('backbrain.setApiKey');
+            } else if (choice === 'Reload Window') {
+              void vscode.commands.executeCommand('workbench.action.reloadWindow');
+            }
+          });
+        } else {
+          vscode.window.showErrorMessage(
+            `BackBrain: ${backend} is not authenticated. AI agent review is unavailable until you sign in.`,
+            'Login to Gemini',
+            'Reload Window',
+          ).then(choice => {
+            authFailureNotified.delete(backend);
+            if (choice === 'Login to Gemini') {
+              void vscode.commands.executeCommand('backbrain.loginGemini');
+            } else if (choice === 'Reload Window') {
+              void vscode.commands.executeCommand('workbench.action.reloadWindow');
+            }
+          });
+        }
       },
     });
     scanners.push(agentReviewScanner);

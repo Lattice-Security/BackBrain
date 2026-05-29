@@ -281,8 +281,6 @@ const App = () => {
     const [debugPhase, setDebugPhase] = useState('');
     const [lastScanSpecialists, setLastScanSpecialists] = useState<Array<{ name: string; focus: string }>>([]);
     const [agentLogs, setAgentLogs] = useState<string[]>([]);
-    const [apiKey, setApiKey] = useState('');
-    const [apiModel, setApiModel] = useState('llama-3.3-70b-versatile');
 
     useEffect(() => {
         vscode.setState({
@@ -873,50 +871,6 @@ const App = () => {
                                     ))}
                                 </div>
                             )}
-                        </section>
-
-                        <section className="bb-section">
-                            <div className="bb-section-header">
-                                <div className="bb-section-title bb-section-title--with-icon">
-                                    <Icon name="zap" />
-                                    API Scan (Groq)
-                                </div>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
-                                <div>
-                                    <label style={{ fontSize: '10px', color: 'var(--bb-color-muted)', display: 'block', marginBottom: '3px' }}>API Key</label>
-                                    <input
-                                        type="password"
-                                        className="bb-input"
-                                        placeholder="gsk_..."
-                                        value={apiKey}
-                                        onChange={e => setApiKey(e.target.value)}
-                                        style={{ width: '100%', boxSizing: 'border-box' }}
-                                    />
-                                </div>
-                                <div>
-                                    <label style={{ fontSize: '10px', color: 'var(--bb-color-muted)', display: 'block', marginBottom: '3px' }}>Model</label>
-                                    <input
-                                        type="text"
-                                        className="bb-input"
-                                        value={apiModel}
-                                        onChange={e => setApiModel(e.target.value)}
-                                        style={{ width: '100%', boxSizing: 'border-box' }}
-                                    />
-                                </div>
-                                <button
-                                    className="bb-start-button"
-                                    onClick={() => {
-                                        if (!apiKey.trim()) return;
-                                        setError(null);
-                                        vscode.postMessage({ type: 'requestApiScan', apiKey: apiKey.trim(), model: apiModel.trim() || 'llama-3.3-70b-versatile' });
-                                    }}
-                                    disabled={loading || !apiKey.trim()}
-                                >
-                                    <Icon name="zap" />
-                                    Run API Scan
-                                </button>
-                            </div>
                         </section>
 
                         {error && (
