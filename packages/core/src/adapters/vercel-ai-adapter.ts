@@ -88,6 +88,7 @@ export class VercelAIAdapter implements AIProvider {
                 case 'openai':
                 case 'openrouter':
                 case 'nvidia':
+                case 'groq':
                     this.providerFactory = createOpenAI(settings);
                     break;
                 case 'anthropic':

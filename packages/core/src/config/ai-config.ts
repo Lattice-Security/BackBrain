@@ -8,7 +8,7 @@
 /**
  * Supported AI providers via Vercel AI SDK
  */
-export type SupportedProvider = 'openai' | 'anthropic' | 'google' | 'xai' | 'deepseek' | 'openrouter' | 'nvidia';
+export type SupportedProvider = 'openai' | 'anthropic' | 'google' | 'xai' | 'deepseek' | 'openrouter' | 'nvidia' | 'groq';
 
 /**
  * Configuration for an AI provider
@@ -36,6 +36,7 @@ export const DEFAULT_MODELS: Record<SupportedProvider, string> = {
     deepseek: 'deepseek-chat',
     openrouter: 'openai/gpt-4o-mini',
     nvidia: 'deepseek-ai/deepseek-v4-flash',
+    groq: 'llama-3.3-70b-versatile',
 };
 
 /**
@@ -50,6 +51,7 @@ export const API_KEY_ENV_VARS: Record<SupportedProvider, string> = {
     deepseek: 'DEEPSEEK_API_KEY',
     openrouter: 'OPENROUTER_API_KEY',
     nvidia: 'NVIDIA_API_KEY',
+    groq: 'GROQ_API_KEY',
 };
 
 /**
@@ -58,6 +60,7 @@ export const API_KEY_ENV_VARS: Record<SupportedProvider, string> = {
 export const DEFAULT_BASE_URLS: Partial<Record<SupportedProvider, string>> = {
     openrouter: 'https://openrouter.ai/api/v1',
     nvidia: 'https://integrate.api.nvidia.com/v1',
+    groq: 'https://api.groq.com/openai/v1',
 };
 
 /**
