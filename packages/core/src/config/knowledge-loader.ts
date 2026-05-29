@@ -1,23 +1,47 @@
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const KNOWLEDGE_DIR = join(__dirname, '../knowledge');
+const EMERGING_TRENDS_FILENAME = 'emerging_security_paradigms_and_threat_horizons_in_ai_generated_and_agent_assisted_codebases_a_2026_technical_threat_intelligence_report_V3.json';
+const VULNERABILITY_CATALOG_FILENAME = 'empirical_analysis_of_vulnerability_propagation_in_ai_generated_and_ai_assisted_source_code_V2.json';
 
-const EMERGING_TRENDS_FILE = join(
-  KNOWLEDGE_DIR,
-  'emerging_security_paradigms_and_threat_horizons_in_ai_generated_and_agent_assisted_codebases_a_2026_technical_threat_intelligence_report_V3.json',
-);
-const VULNERABILITY_CATALOG_FILE = join(
-  KNOWLEDGE_DIR,
-  'empirical_analysis_of_vulnerability_propagation_in_ai_generated_and_ai_assisted_source_code_V2.json',
-);
+function tryResolveKnowledgeDir(): string | null {
+  const candidates: (() => string | null)[] = [
+    () => { try { return join(dirname(fileURLToPath(import.meta.url)), '../knowledge'); } catch { return null; } },
+    () => { try { return join(__dirname, 'knowledge'); } catch { return null; } },
+    () => { try { return join(__dirname, '../knowledge'); } catch { return null; } },
+    () => { try { return join(__dirname, '../../knowledge'); } catch { return null; } },
+  ];
+  for (const resolve of candidates) {
+    const dir = resolve();
+    if (dir && existsSync(join(dir, EMERGING_TRENDS_FILENAME))) {
+      return dir;
+    }
+  }
+  return null;
+}
+
+function tryReadJSON(filePath: string): any | null {
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
 
 export interface KnowledgeContext {
   trends: string;
   vulnerabilityCatalog: string;
+}
+
+function formatAffects(affects: any): string {
+  if (!affects) return 'N/A';
+  const parts: string[] = [];
+  if (affects.languages) parts.push(`lang:${affects.languages.join(',')}`);
+  if (affects.app_types) parts.push(`app:${affects.app_types.join(',')}`);
+  if (affects.frameworks) parts.push(`fw:${affects.frameworks.join(',')}`);
+  if (affects.ai_tools_implicated) parts.push(`tools:${affects.ai_tools_implicated.join(',')}`);
+  return parts.join('; ') || 'N/A';
 }
 
 function formatTrendsSection(data: any): string {
@@ -51,16 +75,6 @@ function formatTrendsSection(data: any): string {
   return lines.join('\n');
 }
 
-function formatAffects(affects: any): string {
-  if (!affects) return 'N/A';
-  const parts: string[] = [];
-  if (affects.languages) parts.push(`lang:${affects.languages.join(',')}`);
-  if (affects.app_types) parts.push(`app:${affects.app_types.join(',')}`);
-  if (affects.frameworks) parts.push(`fw:${affects.frameworks.join(',')}`);
-  if (affects.ai_tools_implicated) parts.push(`tools:${affects.ai_tools_implicated.join(',')}`);
-  return parts.join('; ') || 'N/A';
-}
-
 function formatVulnerabilitySection(data: any): string {
   const lines: string[] = ['--- AI-Generated Vulnerability Catalog ---'];
   if (data.metadata) {
@@ -90,11 +104,16 @@ function formatVulnerabilitySection(data: any): string {
 
 export function loadKnowledge(): KnowledgeContext | null {
   try {
-    const trendsRaw = JSON.parse(readFileSync(EMERGING_TRENDS_FILE, 'utf-8'));
-    const catalogRaw = JSON.parse(readFileSync(VULNERABILITY_CATALOG_FILE, 'utf-8'));
+    const knowledgeDir = tryResolveKnowledgeDir();
+    if (!knowledgeDir) return null;
+
+    const trendsRaw = tryReadJSON(join(knowledgeDir, EMERGING_TRENDS_FILENAME));
+    const catalogRaw = tryReadJSON(join(knowledgeDir, VULNERABILITY_CATALOG_FILENAME));
+    if (!trendsRaw && !catalogRaw) return null;
+
     return {
-      trends: formatTrendsSection(trendsRaw),
-      vulnerabilityCatalog: formatVulnerabilitySection(catalogRaw),
+      trends: trendsRaw ? formatTrendsSection(trendsRaw) : '',
+      vulnerabilityCatalog: catalogRaw ? formatVulnerabilitySection(catalogRaw) : '',
     };
   } catch {
     return null;
@@ -102,14 +121,17 @@ export function loadKnowledge(): KnowledgeContext | null {
 }
 
 export function formatKnowledgeBlock(knowledge: KnowledgeContext): string {
-  return [
-    'Security intelligence context from external research:',
-    '',
-    knowledge.trends,
-    '',
-    knowledge.vulnerabilityCatalog,
-    '',
-    'Use this intelligence when deciding which specialists to create and what checks they should perform.',
-    'Prioritize scanning for patterns listed in the detection signals above.',
-  ].join('\n');
+  const parts: string[] = ['Security intelligence context from external research:'];
+  if (knowledge.trends) {
+    parts.push('');
+    parts.push(knowledge.trends);
+  }
+  if (knowledge.vulnerabilityCatalog) {
+    parts.push('');
+    parts.push(knowledge.vulnerabilityCatalog);
+  }
+  parts.push('');
+  parts.push('Use this intelligence when deciding which specialists to create and what checks they should perform.');
+  parts.push('Prioritize scanning for patterns listed in the detection signals above.');
+  return parts.join('\n');
 }
