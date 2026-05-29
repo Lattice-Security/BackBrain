@@ -350,8 +350,9 @@ export class CliAgentReviewScanner implements SecurityScanner {
             maxSpecialists: this.maxSpecialists,
         });
         let planner: PlannerOutput;
+        let plannerRaw = '';
         try {
-            const plannerRaw = await this.runBackend(
+            plannerRaw = await this.runBackend(
                 availableBackends, plannerPrompt, repositoryRoot,
                 leadBackend.id === 'opencode' ? this.plannerTimeoutMs * 3 : this.plannerTimeoutMs, 'planner',
             );
@@ -361,7 +362,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 planner = plannerSchema.parse(this.extractJsonAggressive(plannerRaw));
             }
         } catch (error) {
-            logger.warn('Planner failed or timed out — aborting agent scan', { error: toError(error) });
+            logger.warn('Planner failed or timed out — aborting agent scan', { error: toError(error), backend: leadBackend.id, plannerRawLength: plannerRaw?.length });
             this.reportStatus(context, {
                 phase: 'degraded',
                 level: 'warn',
@@ -806,6 +807,12 @@ export class CliAgentReviewScanner implements SecurityScanner {
             });
         }
 
+        logger.info('Available backends after probing', {
+            preferred: this.preferredBackend,
+            available: available.map(b => b.id),
+            unavailable: Object.keys(this.backends).filter(id => !available.some(a => a.id === id)),
+        });
+
         return available;
     }
 
@@ -1104,7 +1111,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         retryCount = 0,
         fallbackBackends?: Array<{ id: AgentBackendId; config: AgentBackendConfig }>,
     ): Promise<string> {
-        const model = backend.config.model || 'llama-3.3-70b-versatile';
+        let model = backend.config.model || 'llama-3.3-70b-versatile';
         const apiKey = backend.config.apiKey || '';
 
         if (!apiKey) {
@@ -1137,6 +1144,8 @@ export class CliAgentReviewScanner implements SecurityScanner {
 
             if (!response.ok) {
                 const text = await response.text();
+                logger.warn('Groq API HTTP status', { status: response.status, model });
+                logger.warn('Groq API response body', { body: text.slice(0, 500) });
                 throw Object.assign(
                     new Error(`Groq API returned ${response.status}: ${text.slice(0, 500)}`),
                     { stdout: text, stderr: `HTTP ${response.status}` },
@@ -1155,6 +1164,23 @@ export class CliAgentReviewScanner implements SecurityScanner {
             }
 
             const diagnostics = this.classifyBackendFailure(backend.id, error as ExecLikeError);
+
+            // Model fallback: if the current model is rejected (400/404 with model-related
+            // error), retry once with the well-known fallback model.
+            const errMsg = (error as Error).message?.toLowerCase() || '';
+            const isModelError = (
+                (errMsg.includes('400') || errMsg.includes('404')) &&
+                (errMsg.includes('model') || errMsg.includes('not found'))
+            );
+            if (isModelError && model !== 'mixtral-8x7b-32768') {
+                logger.warn('Groq model rejected, retrying with mixtral-8x7b-32768', { model });
+                model = 'mixtral-8x7b-32768';
+                const remaining = hardCeilingMs - 2_000;
+                if (remaining > 0) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    return this.runBackendRest(backend, prompt, remaining, options, retryCount, fallbackBackends);
+                }
+            }
 
             if (diagnostics.category === 'rate-limit' && retryCount < 3) {
                 const delay = (retryCount + 1) * 5_000;
@@ -1332,8 +1358,8 @@ export class CliAgentReviewScanner implements SecurityScanner {
             return [
                 'You are a security analysis agent operating in read-only mode.',
                 'CRITICAL: Return ONLY the JSON object specified below.',
+                'Do NOT include any markdown formatting, code fences, or backticks around the JSON.',
                 'Do NOT add any prose before or after the JSON.',
-                'Do NOT wrap the JSON in markdown code fences.',
                 'Your entire response must be a single valid JSON object.',
                 prompt,
             ].join('\n\n');
@@ -1347,7 +1373,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         output: string,
         options: BackendExecutionOptions,
     ): string {
-        const trimmed = output.trim();
+        let trimmed = output.trim();
         if (!trimmed) {
             return trimmed;
         }
@@ -1380,10 +1406,10 @@ export class CliAgentReviewScanner implements SecurityScanner {
             if (codexText) return codexText;
         }
 
-        if (backend === 'groq' && options.expectsJsonObject) {
+        if (backend === 'groq') {
             const jsonMatch = trimmed.match(/\{[\s\S]*\}$/);
             if (jsonMatch) {
-                return jsonMatch[0];
+                trimmed = jsonMatch[0];
             }
         }
 
@@ -1445,6 +1471,7 @@ export class CliAgentReviewScanner implements SecurityScanner {
         try {
             return JSON.parse(trimmed);
         } catch {
+            logger.warn('extractJson: raw JSON parse failed, trying alternatives', { snippet: trimmed.slice(0, 300) });
             const fenced = trimmed.match(/```json\s*([\s\S]*?)```/i);
             if (fenced?.[1]) {
                 return JSON.parse(fenced[1]);
@@ -1483,14 +1510,16 @@ export class CliAgentReviewScanner implements SecurityScanner {
             }
         }
 
-        // Strategy 2: locate the outer object by finding the `"findings"` key and
+        // Strategy 2: locate the outer object by finding a known key and
         // walking back to the enclosing `{`.
-        const findingsIdx = text.indexOf('"findings"');
-        if (findingsIdx >= 0) {
-            const openBrace = text.lastIndexOf('{', findingsIdx);
-            const closeBrace = text.lastIndexOf('}');
-            if (openBrace >= 0 && closeBrace > openBrace) {
-                try { return JSON.parse(text.slice(openBrace, closeBrace + 1)); } catch { /* fall through */ }
+        for (const key of ['"findings"', '"specialists"']) {
+            const keyIdx = text.indexOf(key);
+            if (keyIdx >= 0) {
+                const openBrace = text.lastIndexOf('{', keyIdx);
+                const closeBrace = text.lastIndexOf('}');
+                if (openBrace >= 0 && closeBrace > openBrace) {
+                    try { return JSON.parse(text.slice(openBrace, closeBrace + 1)); } catch { /* fall through */ }
+                }
             }
         }
 
