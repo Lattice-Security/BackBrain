@@ -14,11 +14,13 @@ import { registerLoginGeminiCommand } from './loginGeminiCommand';
 import { registerLogoutGeminiCommand } from './logoutGeminiCommand';
 
 import { SeverityPanelProvider } from '../views/severity-panel-provider';
+import type { DiagnosticService } from '../services/diagnostic-service';
 
 interface CommandContext {
   fileSystem: FileSystem;
   securityService: SecurityService;
   severityPanelProvider: SeverityPanelProvider;
+  diagnosticService: DiagnosticService;
 }
 
 export function registerCommands(context: vscode.ExtensionContext, ctx: CommandContext) {

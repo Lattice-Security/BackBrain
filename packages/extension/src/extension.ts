@@ -28,6 +28,7 @@ import { initializeFixHistoryService } from './services/fix-history-service';
 import { registerFixPreviewProvider } from './services/fix-preview-provider';
 import { GeminiCliInstaller } from './utils/gemini-cli-installer';
 import { loadTreeSitterGrammars } from './services/tree-sitter-grammar-loader';
+import { DiagnosticService } from './services/diagnostic-service';
 
 const logger = createLogger('Extension');
 
@@ -411,12 +412,16 @@ export async function activate(context: vscode.ExtensionContext) {
     // Create security service
     const securityService = new SecurityService(scanners);
 
+    // Create diagnostic service for inline editor squiggles
+    const diagnosticService = new DiagnosticService();
+    context.subscriptions.push(diagnosticService);
+
     // Track UI initialization success
     let commandsInitialized = false;
     let panelInitialized = false;
 
     // Initialize Severity Panel Provider
-    const severityPanelProvider = new SeverityPanelProvider(context.extensionUri, securityService, fileSystem);
+    const severityPanelProvider = new SeverityPanelProvider(context.extensionUri, securityService, fileSystem, diagnosticService);
     severityPanelProvider.setScanDepthTier(tierConfig.label);
     const applyAgentReviewConfiguration = () => {
       const latestConfig = vscode.workspace.getConfiguration('backbrain');
@@ -473,7 +478,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Register UI components
     try {
       // 1. Register commands (now depends on severityPanelProvider)
-      registerCommands(context, { fileSystem, securityService, severityPanelProvider });
+      registerCommands(context, { fileSystem, securityService, severityPanelProvider, diagnosticService });
       commandsInitialized = true;
     } catch (err) {
       logger.error('Failed to register commands', { error: err });
@@ -501,6 +506,21 @@ export async function activate(context: vscode.ExtensionContext) {
       logger.error(msg);
       vscode.window.showErrorMessage(msg);
     }
+
+    // Auto-scan on file save
+    context.subscriptions.push(
+      vscode.workspace.onDidSaveTextDocument(async (document) => {
+        if (document.uri.scheme !== 'file') return;
+        const config = vscode.workspace.getConfiguration('backbrain');
+        if (!config.get<boolean>('scanOnSave', true)) return;
+        const filePath = document.uri.fsPath;
+        if (filePath.includes('/node_modules/') || filePath.includes('\\node_modules\\')) return;
+        const declExts = ['.d.ts', '.d.tsx', '.d.mts', '.d.cts'];
+        if (declExts.some(ext => filePath.endsWith(ext))) return;
+        logger.debug('Auto-scanning file on save', { filePath });
+        vscode.commands.executeCommand('backbrain.scanFile', document.uri, { quiet: true });
+      })
+    );
 
     logger.info('BackBrain extension activated successfully');
 

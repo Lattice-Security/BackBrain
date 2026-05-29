@@ -16,6 +16,7 @@ import {
 import { getActiveProvider } from '../services/ai-adapter-factory';
 import { markFileAsNavigated } from '../utils/navigation-cooldown';
 import { getWorkspacePackageNames, filterWorkspaceHallucinatedDeps } from '../services/workspace-packages-resolver';
+import { DiagnosticService, type DiagnosticIssue } from '../services/diagnostic-service';
 
 const logger = createLogger('SeverityPanel');
 const execFileAsync = promisify(execFile);
@@ -87,6 +88,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         private readonly _extensionUri: vscode.Uri,
         private readonly _securityService: SecurityService,
         private readonly _fileSystem: FileSystem,
+        private readonly _diagnosticService: DiagnosticService,
     ) { }
 
     /**
@@ -99,18 +101,24 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         this._lastBatchProgress = null;
         this._postMessage({ type: 'scanComplete', issues: issueData });
 
+        // Update inline editor diagnostics (squiggly underlines)
+        this._updateDiagnosticsFromIssues(issueData);
+
         // Focus the view if it exists
         if (this._view) {
             this._view.show(true);
         }
     }
 
-    public updateFileIssues(_filePath: string, issues: any[]): void {
+    public updateFileIssues(filePath: string, issues: any[]): void {
         const issueData: IssueData[] = issues.map(issue => toIssueData(issue));
         this._issues = issueData;
         this._lastScanError = null;
         this._lastBatchProgress = null;
         this._postMessage({ type: 'scanComplete', issues: this._issues });
+
+        // Update inline editor diagnostics (squiggly underlines)
+        this._diagnosticService.updateFileDiagnostics(filePath, issues as DiagnosticIssue[]);
     }
 
     public getIssues(): IssueData[] {
@@ -125,6 +133,16 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     public clearStatus(): void {
         this._statusMessage = null;
         this._postMessage({ type: 'statusClear' });
+    }
+
+    private _updateDiagnosticsFromIssues(issues: IssueData[]): void {
+        const byFile = new Map<string, DiagnosticIssue[]>();
+        for (const issue of issues) {
+            const existing = byFile.get(issue.filePath) ?? [];
+            existing.push(issue as DiagnosticIssue);
+            byFile.set(issue.filePath, existing);
+        }
+        this._diagnosticService.updateDiagnostics(byFile);
     }
 
     public setScanDepthTier(label: string): void {

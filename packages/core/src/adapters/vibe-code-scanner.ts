@@ -348,7 +348,7 @@ export class VibeCodeScanner implements SecurityScanner {
           if (moduleName.startsWith('.') || moduleName.startsWith('/')) continue;
           if (NODE_BUILTINS.has(moduleName)) continue;
           // Also skip Node sub-path exports (e.g. path/posix, fs/promises, stream/web)
-          const topLevel = moduleName.split('/')[0];
+          const topLevel = moduleName.split('/')[0] as string;
           if (NODE_BUILTINS.has(topLevel) || NODE_BUILTINS.has(`node:${topLevel}`)) continue;
 
           // Get the package name (handle scoped packages like @org/pkg)

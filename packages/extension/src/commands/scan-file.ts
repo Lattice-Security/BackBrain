@@ -7,11 +7,13 @@ const logger = createLogger('ScanFile');
 
 import { SeverityPanelProvider } from '../views/severity-panel-provider';
 import { getWorkspacePackageNames, filterWorkspaceHallucinatedDeps } from '../services/workspace-packages-resolver';
+import type { DiagnosticService, DiagnosticIssue } from '../services/diagnostic-service';
 
 interface CommandContext {
   fileSystem: FileSystem;
   securityService: SecurityService;
   severityPanelProvider: SeverityPanelProvider;
+  diagnosticService: DiagnosticService;
 }
 
 interface ScanFileOptions {
@@ -104,6 +106,20 @@ export async function scanFileCommand(ctx: CommandContext, uri?: vscode.Uri, opt
 
       // Merge the file scan result into the existing dashboard state
       ctx.severityPanelProvider.updateFileIssues(filePath, filteredIssues);
+
+      // Update inline editor diagnostics (squiggly underlines)
+      ctx.diagnosticService.updateFileDiagnostics(filePath, filteredIssues.map(i => {
+        const diag: DiagnosticIssue = {
+          title: i.title,
+          description: i.description,
+          severity: i.severity,
+          filePath: i.location.filePath,
+          line: i.location.line,
+        };
+        if (i.location.column !== undefined) diag.column = i.location.column;
+        if (i.location.endLine !== undefined) diag.endLine = i.location.endLine;
+        return diag;
+      }));
 
       const critical = filteredIssues.filter((i: CodeIssue) => i.severity === 'critical').length;
       const high = filteredIssues.filter((i: CodeIssue) => i.severity === 'high').length;
