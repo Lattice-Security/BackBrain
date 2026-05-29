@@ -82,6 +82,7 @@ export function registerSetApiKeyCommand(_context: vscode.ExtensionContext): vsc
                 const groqConfig = vscode.workspace.getConfiguration('backbrain.ai');
                 await groqConfig.update('agentGroqApiKey', apiKey, vscode.ConfigurationTarget.Global);
                 await groqConfig.update('agentPreferredBackend', 'groq', vscode.ConfigurationTarget.Global);
+                await groqConfig.update('provider', 'groq', vscode.ConfigurationTarget.Global);
                 const backends = groqConfig.get<string[]>('agentBackends', ['codex', 'gemini', 'opencode']);
                 if (!backends.includes('groq')) {
                     backends.push('groq');
