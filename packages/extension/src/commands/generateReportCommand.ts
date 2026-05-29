@@ -9,6 +9,7 @@ interface GenerateReportCommandOptions {
     format?: 'HTML Report' | 'JSON Data';
     targetUri?: vscode.Uri;
     openAfterSave?: boolean;
+    selectedIssueIds?: string[];
 }
 
 export function registerGenerateReportCommand(
@@ -16,7 +17,12 @@ export function registerGenerateReportCommand(
     panelProvider: SeverityPanelProvider
 ): vscode.Disposable {
     return vscode.commands.registerCommand('backbrain.generateReport', async (options?: GenerateReportCommandOptions) => {
-        const issues = panelProvider.getIssues();
+        let issues = panelProvider.getIssues();
+
+        if (options?.selectedIssueIds) {
+            const idSet = new Set(options.selectedIssueIds);
+            issues = issues.filter(i => idSet.has(i.id));
+        }
 
         if (issues.length === 0) {
             vscode.window.showWarningMessage('No issues to report. Please scan your workspace first.');

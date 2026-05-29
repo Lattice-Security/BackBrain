@@ -31,13 +31,15 @@ interface IssueItemProps {
     activeFix: FixData | null;
     explanation: { content: string; loading: boolean; error: string | null; provider: string | null } | null;
     onClearActiveFix: () => void;
+    isSelected?: boolean;
+    onToggleSelect?: (issueId: string) => void;
 }
 
 // ============================================================
 // Component
 // ============================================================
 
-export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanation, onClearActiveFix }) => {
+export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanation, onClearActiveFix, isSelected, onToggleSelect }) => {
     const [expanded, setExpanded] = useState(false);
     const [explanationCollapsed, setExplanationCollapsed] = useState(false);
 
@@ -105,9 +107,18 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
             onClick={handleCardClick}
             style={severityStyle}
         >
-            {/* ── Top row: severity + source chip + chevron ── */}
+            {/* ── Top row: severity + checkbox + source chip + chevron ── */}
             <div className="issue-item-header">
                 <span className="severity-badge">{issue.severity}</span>
+                {onToggleSelect && (
+                    <input
+                        type="checkbox"
+                        className="issue-checkbox"
+                        checked={!!isSelected}
+                        onChange={() => onToggleSelect(issue.id)}
+                        onClick={e => e.stopPropagation()}
+                    />
+                )}
                 {sourceChipLabel && (
                     <span className={sourceChipClass}>{sourceChipLabel}</span>
                 )}

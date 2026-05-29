@@ -279,6 +279,23 @@ const App = () => {
     const [debugSteps, setDebugSteps] = useState<DebugStep[]>([]);
     const [debugPhase, setDebugPhase] = useState('');
     const [agentLogs, setAgentLogs] = useState<string[]>([]);
+    const [selectedIssueIds, setSelectedIssueIds] = useState<Set<string>>(new Set());
+
+    const toggleIssueSelection = (issueId: string) => {
+        setSelectedIssueIds(prev => {
+            const next = new Set(prev);
+            if (next.has(issueId)) {
+                next.delete(issueId);
+            } else {
+                next.add(issueId);
+            }
+            return next;
+        });
+    };
+
+    const handleExportSelected = () => {
+        vscode.postMessage({ type: 'exportSelectedReport', issueIds: Array.from(selectedIssueIds) });
+    };
 
     useEffect(() => {
         vscode.setState({
@@ -917,6 +934,16 @@ const App = () => {
                                 <option value="deterministic">Deterministic</option>
                             </select>
                             <span className="bb-depth-pill">{scanDepthTier}</span>
+                            {issues.length > 0 && (
+                                <button
+                                    className="bb-action-button"
+                                    onClick={handleExportSelected}
+                                    disabled={selectedIssueIds.size === 0}
+                                    title="Export selected issues as report"
+                                >
+                                    Export Selected ({selectedIssueIds.size})
+                                </button>
+                            )}
                         </div>
 
                         {issues.length === 0 ? (
@@ -938,6 +965,8 @@ const App = () => {
                                             activeFix={activeFix?.issueId === issue.id ? activeFix.fix : null}
                                             explanation={explanations[issue.id] ?? null}
                                             onClearActiveFix={() => setActiveFix(null)}
+                                            isSelected={selectedIssueIds.has(issue.id)}
+                                            onToggleSelect={toggleIssueSelection}
                                         />
                                     ))}
                                 </section>
