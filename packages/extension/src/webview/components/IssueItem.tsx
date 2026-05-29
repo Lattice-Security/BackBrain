@@ -32,13 +32,15 @@ interface IssueItemProps {
     explanation: { content: string; loading: boolean; error: string | null; provider: string | null } | null;
     onClearActiveFix: () => void;
     isFixed?: boolean;
+    isSelected?: boolean;
+    onToggleSelect?: (issueId: string) => void;
 }
 
 // ============================================================
 // Component
 // ============================================================
 
-export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanation, onClearActiveFix, isFixed }) => {
+export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanation, onClearActiveFix, isFixed, isSelected, onToggleSelect }) => {
     const [expanded, setExpanded] = useState(false);
     const [explanationCollapsed, setExplanationCollapsed] = useState(false);
 
@@ -106,10 +108,19 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
             onClick={handleCardClick}
             style={severityStyle}
         >
-            {/* ── Top row: severity + fixed badge + source chip + chevron ── */}
+            {/* ── Top row: severity + checkbox/status + source chip + chevron ── */}
             <div className="issue-item-header">
                 <span className="severity-badge">{issue.severity}</span>
                 {isFixed && <span className="fixed-badge">Fixed ✓</span>}
+                {onToggleSelect && (
+                    <input
+                        type="checkbox"
+                        className="issue-checkbox"
+                        checked={!!isSelected}
+                        onChange={() => onToggleSelect(issue.id)}
+                        onClick={e => e.stopPropagation()}
+                    />
+                )}
                 {sourceChipLabel && (
                     <span className={sourceChipClass}>{sourceChipLabel}</span>
                 )}

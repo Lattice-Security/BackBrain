@@ -441,6 +441,10 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                     await vscode.commands.executeCommand('backbrain.generateReport');
                     break;
 
+                case 'exportSelectedReport':
+                    await vscode.commands.executeCommand('backbrain.generateReport', { selectedIssueIds: message.issueIds });
+                    break;
+
                 case 'setDebugMode':
                     this._debugMode = message.enabled;
                     if (!message.enabled) {

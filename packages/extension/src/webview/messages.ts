@@ -58,6 +58,7 @@ export type WebviewMessage =
     | { type: 'batchFix' }
     | { type: 'requestFixHistory' }
     | { type: 'exportReport' }
+    | { type: 'exportSelectedReport'; issueIds: string[] }
     | { type: 'setDebugMode'; enabled: boolean }
     | { type: 'requestGraphData'; paths?: string[] }
     | { type: 'openVisualizerTab' };

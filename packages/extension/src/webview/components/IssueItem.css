@@ -39,6 +39,12 @@
     flex-shrink: 0;
 }
 
+.issue-checkbox {
+    cursor: pointer;
+    flex-shrink: 0;
+    accent-color: var(--bb-color-link);
+}
+
 /* ============================================================
  * Source Chips
  * ============================================================ */

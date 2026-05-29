@@ -698,6 +698,30 @@ button {
     font-size: 11px;
 }
 
+.bb-action-button {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: var(--bb-font-weight-medium);
+    padding: 3px 9px;
+    border-radius: var(--bb-border-radius-lg);
+    border: 0.5px solid var(--bb-color-link);
+    background-color: color-mix(in srgb, var(--bb-color-link) 12%, var(--bb-color-background));
+    color: var(--bb-color-link);
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: opacity var(--bb-transition-fast);
+}
+
+.bb-action-button:hover:not(:disabled) {
+    opacity: 0.8;
+}
+
+.bb-action-button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
 .bb-depth-pill {
     margin-left: auto;
     color: var(--bb-color-link);
