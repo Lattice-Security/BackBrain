@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import * as path from 'path';
 import * as os from 'os';
 import { z } from 'zod';
+import { loadKnowledge, formatKnowledgeBlock } from '../config/knowledge-loader.js';
 
 import type {
     ScanResult,
@@ -331,11 +332,32 @@ export class CliAgentReviewScanner implements SecurityScanner {
             specialistConcurrency: this.specialistConcurrency,
         });
 
+        const knowledge = loadKnowledge();
+        if (knowledge) {
+            logger.info('Loaded security intelligence context', {
+                trends: knowledge.trends.split('\n').filter(l => l.startsWith('- ')).length,
+                catalog: knowledge.vulnerabilityCatalog.split('\n').filter(l => l.startsWith('- ')).length,
+            });
+            this.reportStatus(context, {
+                phase: 'agent-planner',
+                level: 'info',
+                message: 'Security intelligence context loaded (trends + vulnerability catalog).',
+            });
+        } else {
+            logger.warn('Security intelligence context not available — knowledge files missing from packages/core/src/knowledge/');
+            this.reportStatus(context, {
+                phase: 'agent-planner',
+                level: 'warn',
+                message: 'Security intelligence context not loaded (knowledge files not found).',
+            });
+        }
+
         const plannerPrompt = this.buildPlannerPrompt({
             repositoryRoot,
             paths: effectivePaths,
             deterministicIssues,
             changedFiles,
+            ...(knowledge ? { knowledgeContext: formatKnowledgeBlock(knowledge) } : {}),
         });
 
         const leadBackend = availableBackends[0]!;
@@ -1794,8 +1816,9 @@ export class CliAgentReviewScanner implements SecurityScanner {
         paths: string[];
         deterministicIssues: SecurityIssue[];
         changedFiles: string[];
+        knowledgeContext?: string;
     }): string {
-        return [
+        const sections: string[] = [
             'You are the lead security planning agent for a codebase review.',
             'Inspect the repository in read-only mode. You may use safe local commands for discovery, but do not modify files.',
             `Repository root: ${input.repositoryRoot}`,
@@ -1803,22 +1826,26 @@ export class CliAgentReviewScanner implements SecurityScanner {
             `Changed files: ${input.changedFiles.join(', ') || 'none detected'}`,
             'Deterministic findings:',
             this.summarizeDeterministicIssues(input.deterministicIssues),
-            `Decide dynamically which specialist review agents are needed for this codebase. Emit at most ${this.maxSpecialists} specialists.`,
-            'Each specialist must have a unique stable role name, rationale, focus, file/path scope, and specific checks to perform.',
-            'Prefer changed files and requested scan paths over unrelated repository areas.',
-            'Return ONLY valid JSON with this shape:',
-            JSON.stringify({
-                repoSummary: 'short repository summary',
-                specialists: [{
-                    name: 'freeform role name',
-                    rationale: 'why this specialist is needed',
-                    focus: 'what this specialist should review',
-                    paths: ['relative/or/absolute/path'],
-                    checks: ['specific concern to inspect'],
-                    relevantFindingIds: ['optional-finding-id'],
-                }],
-            }, null, 2),
-        ].join('\n\n');
+        ];
+        if (input.knowledgeContext) {
+            sections.push(input.knowledgeContext);
+        }
+        sections.push(`Decide dynamically which specialist review agents are needed for this codebase. Emit at most ${this.maxSpecialists} specialists.`);
+        sections.push('Each specialist must have a unique stable role name, rationale, focus, file/path scope, and specific checks to perform.');
+        sections.push('Prefer changed files and requested scan paths over unrelated repository areas.');
+        sections.push('Return ONLY valid JSON with this shape:');
+        sections.push(JSON.stringify({
+            repoSummary: 'short repository summary',
+            specialists: [{
+                name: 'freeform role name',
+                rationale: 'why this specialist is needed',
+                focus: 'what this specialist should review',
+                paths: ['relative/or/absolute/path'],
+                checks: ['specific concern to inspect'],
+                relevantFindingIds: ['optional-finding-id'],
+            }],
+        }, null, 2));
+        return sections.join('\n\n');
     }
 
     private buildSpecialistPrompt(input: {
