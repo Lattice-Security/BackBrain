@@ -275,11 +275,9 @@ const App = () => {
     }, [selectedTarget]);
     const [sortMethod, setSortMethod] = useState<SortMethod>('severity');
     const [filterMethod, setFilterMethod] = useState<FilterMethod>('all');
-    const [expandedSpec, setExpandedSpec] = useState<Record<string, boolean>>({});
     const [debugMode, setDebugMode] = useState(false);
     const [debugSteps, setDebugSteps] = useState<DebugStep[]>([]);
     const [debugPhase, setDebugPhase] = useState('');
-    const [lastScanSpecialists, setLastScanSpecialists] = useState<Array<{ name: string; focus: string }>>([]);
     const [agentLogs, setAgentLogs] = useState<string[]>([]);
 
     useEffect(() => {
@@ -347,9 +345,6 @@ const App = () => {
                             if (prev[prev.length - 1] === synthetic) return prev;
                             return [...prev.slice(-199), synthetic];
                         });
-                    }
-                    if (message.phase === 'agent-specialists' && message.agents && message.agents.length > 0) {
-                        setLastScanSpecialists(message.agents.map(name => ({ name, focus: '' })));
                     }
                     break;
                 case 'configurationState':
@@ -975,109 +970,6 @@ const App = () => {
                             </div>
                         </section>
 
-                        <section className="bb-section">
-                            <div className="bb-section-title">Specialists</div>
-                            {!configuration.agentReviewEnabled ? (
-                                <div className="bb-empty-state">
-                                    <div className="bb-empty-title">Agent Review Disabled</div>
-                                    <div className="bb-empty-copy">Enable Agent Review in the Scan tab to run AI specialists.</div>
-                                </div>
-                            ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                    {lastScanSpecialists.length === 0 ? (
-                                        <div className="bb-empty-state">
-                                            <div className="bb-empty-title">No specialist data yet</div>
-                                            <div className="bb-empty-copy">Run a scan with Agent Review enabled to see specialist details.</div>
-                                        </div>
-                                    ) : (() => {
-                                        const agentIssues = issues.filter(i => i.sourceType === 'agent-only' || i.sourceType === 'agent-grounded');
-
-                                        return lastScanSpecialists.map((spec, idx) => {
-                                            const specName = spec.name;
-
-                                            const specFindings = agentIssues.filter(issue => {
-                                                const roles = issue.sourceRoles || [];
-                                                if (roles.length > 0) {
-                                                    return roles.includes(specName);
-                                                }
-                                                if (idx === 0) {
-                                                    return roles.length === 0;
-                                                }
-                                                return false;
-                                            });
-
-                                            const isExpanded = !!expandedSpec[specName];
-                                            const toggleSpec = (name: string) => {
-                                                setExpandedSpec(prev => ({ ...prev, [name]: !prev[name] }));
-                                            };
-
-                                            return (
-                                                <div
-                                                    key={specName}
-                                                    style={{ border: '0.5px solid var(--bb-color-border)', borderRadius: '7px', overflow: 'hidden' }}
-                                                >
-                                                    <div
-                                                        style={{ padding: '8px 10px', background: 'var(--bb-color-panel-soft)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
-                                                        onClick={() => toggleSpec(specName)}
-                                                    >
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                                                            <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--bb-color-success)', flexShrink: 0 }} />
-                                                            <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--bb-color-foreground)' }}>{specName}</span>
-                                                        </div>
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                                            <span style={{
-                                                                fontSize: '10px',
-                                                                padding: '1px 5px',
-                                                                borderRadius: '4px',
-                                                                background: specFindings.length > 0 ? 'var(--bb-severity-high-bg)' : 'var(--bb-color-panel-strong)',
-                                                                color: specFindings.length > 0 ? 'var(--bb-severity-high)' : 'var(--bb-color-muted)'
-                                                            }}>
-                                                                {specFindings.length} {specFindings.length === 1 ? 'finding' : 'findings'}
-                                                            </span>
-                                                            <span style={{
-                                                                display: 'inline-block',
-                                                                transform: isExpanded ? 'rotate(180deg)' : 'none',
-                                                                transition: 'transform var(--bb-transition-fast)',
-                                                                fontSize: '10px',
-                                                                color: 'var(--bb-color-muted)'
-                                                            }}>
-                                                                ▼
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                    {isExpanded && (
-                                                        <div style={{ padding: '8px 10px', borderTop: '0.5px solid var(--bb-color-border)', background: 'var(--bb-color-panel)' }}>
-                                                            <div style={{ fontSize: '10px', color: 'var(--bb-color-muted)', marginBottom: '6px' }}>
-                                                                Backend: {configuration.agentBackends.find(b => b.enabled)?.label || 'Gemini'}
-                                                            </div>
-                                                            {specFindings.length === 0 ? (
-                                                                <div style={{ fontSize: '11px', color: 'var(--bb-color-muted)', fontStyle: 'italic', padding: '4px 0' }}>
-                                                                    No findings. Codebase looks secure according to this specialist.
-                                                                </div>
-                                                            ) : (
-                                                                specFindings.map(finding => (
-                                                                    <div key={finding.id} className="spec-finding">
-                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
-                                                                            <span className={`bb-stat-label-badge bb-stat-label-badge--${finding.severity}`} style={{ fontSize: '9px', fontWeight: 500, padding: '1px 4px', borderRadius: '3px', textTransform: 'uppercase' }}>
-                                                                                {finding.severity}
-                                                                            </span>
-                                                                            <span style={{ fontSize: '11px', color: 'var(--bb-color-foreground)', fontWeight: 500 }}>{finding.title}</span>
-                                                                        </div>
-                                                                        <div style={{ fontSize: '10px', color: 'var(--bb-color-muted)' }}>
-                                                                            {basename(finding.filePath)}:{finding.line}
-                                                                        </div>
-                                                                    </div>
-                                                                ))
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        });
-                                    })()}
-                                </div>
-                            )}
-                        </section>
                     </main>
                 )}
 
