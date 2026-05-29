@@ -1234,6 +1234,14 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
 
         // Invoke the apply fix command
         await vscode.commands.executeCommand('backbrain.applyFix', issue, fix);
+
+        // Notify webview so it can mark the issue as fixed
+        this._postMessage({
+            type: 'fixApplied',
+            sessionId: '',
+            summary: { totalIssues: 1, fixed: 1, skipped: 0, failed: 0 },
+            issueId: issueData.id,
+        });
     }
 
     /**

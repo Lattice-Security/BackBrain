@@ -185,6 +185,35 @@
 }
 
 /* ============================================================
+ * Fixed State
+ * ============================================================ */
+.issue-item--fixed {
+    opacity: 0.6;
+    border-left-color: var(--bb-color-success, #4ec9b0);
+}
+
+.issue-item--fixed:hover {
+    opacity: 0.8;
+}
+
+.fixed-badge {
+    font-size: 10px;
+    font-weight: var(--bb-font-weight-semibold);
+    padding: 2px var(--bb-spacing-sm);
+    border-radius: var(--bb-border-radius-pill);
+    background-color: color-mix(in srgb, var(--bb-color-success, #4ec9b0) 20%, transparent);
+    color: var(--bb-color-success, #4ec9b0);
+    border: 0.5px solid color-mix(in srgb, var(--bb-color-success, #4ec9b0) 40%, transparent);
+    flex-shrink: 0;
+}
+
+.fixed-label {
+    font-size: 11px;
+    color: var(--bb-color-success, #4ec9b0);
+    font-style: italic;
+}
+
+/* ============================================================
  * Expandable Evidence Section
  * ============================================================ */
 .issue-evidence {

@@ -279,6 +279,7 @@ const App = () => {
     const [debugSteps, setDebugSteps] = useState<DebugStep[]>([]);
     const [debugPhase, setDebugPhase] = useState('');
     const [agentLogs, setAgentLogs] = useState<string[]>([]);
+    const [fixedIssueIds, setFixedIssueIds] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         vscode.setState({
@@ -302,6 +303,7 @@ const App = () => {
                     setBatchProgress(null);
                     setDebugSteps([]);
                     setAgentLogs([]);
+                    setFixedIssueIds(new Set());
                     break;
                 case 'scanComplete':
                     setIssues(message.issues);
@@ -310,6 +312,7 @@ const App = () => {
                     setScanStatus(null);
                     setAgentLogs([]);
                     setActiveTab('issues');
+                    setFixedIssueIds(new Set());
                     break;
                 case 'issuesUpdated':
                     setIssues(prev => {
@@ -408,7 +411,9 @@ const App = () => {
                     break;
                 case 'fixApplied':
                     setActiveFix(null);
-                    vscode.postMessage({ type: 'requestScan', target: selectedTargetRef.current === 'file' ? 'workspace' : selectedTargetRef.current });
+                    if (message.issueId) {
+                        setFixedIssueIds(prev => new Set(prev).add(message.issueId));
+                    }
                     break;
                 case 'fixReverted':
                     vscode.postMessage({ type: 'requestScan', target: selectedTargetRef.current === 'file' ? 'workspace' : selectedTargetRef.current });
@@ -938,6 +943,7 @@ const App = () => {
                                             activeFix={activeFix?.issueId === issue.id ? activeFix.fix : null}
                                             explanation={explanations[issue.id] ?? null}
                                             onClearActiveFix={() => setActiveFix(null)}
+                                            isFixed={fixedIssueIds.has(issue.id)}
                                         />
                                     ))}
                                 </section>

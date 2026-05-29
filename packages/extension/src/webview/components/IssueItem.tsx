@@ -31,13 +31,14 @@ interface IssueItemProps {
     activeFix: FixData | null;
     explanation: { content: string; loading: boolean; error: string | null; provider: string | null } | null;
     onClearActiveFix: () => void;
+    isFixed?: boolean;
 }
 
 // ============================================================
 // Component
 // ============================================================
 
-export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanation, onClearActiveFix }) => {
+export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanation, onClearActiveFix, isFixed }) => {
     const [expanded, setExpanded] = useState(false);
     const [explanationCollapsed, setExplanationCollapsed] = useState(false);
 
@@ -101,13 +102,14 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
 
     return (
         <div
-            className="issue-item"
+            className={`issue-item${isFixed ? ' issue-item--fixed' : ''}`}
             onClick={handleCardClick}
             style={severityStyle}
         >
-            {/* ── Top row: severity + source chip + chevron ── */}
+            {/* ── Top row: severity + fixed badge + source chip + chevron ── */}
             <div className="issue-item-header">
                 <span className="severity-badge">{issue.severity}</span>
+                {isFixed && <span className="fixed-badge">Fixed ✓</span>}
                 {sourceChipLabel && (
                     <span className={sourceChipClass}>{sourceChipLabel}</span>
                 )}
@@ -136,20 +138,26 @@ export const IssueItem: React.FC<IssueItemProps> = ({ issue, activeFix, explanat
 
             {/* ── Actions ── */}
             <div className="issue-actions" onClick={e => e.stopPropagation()}>
-                <button
-                    className="action-button action-explain"
-                    onClick={handleExplain}
-                    title="Explain this issue with AI"
-                >
-                    Explain
-                </button>
-                <button
-                    className="action-button action-fix"
-                    onClick={handleSuggestFix}
-                    title="Get AI-suggested fix"
-                >
-                    Suggest Fix
-                </button>
+                {isFixed ? (
+                    <span className="fixed-label">Fix applied — re-scan to verify</span>
+                ) : (
+                    <>
+                        <button
+                            className="action-button action-explain"
+                            onClick={handleExplain}
+                            title="Explain this issue with AI"
+                        >
+                            Explain
+                        </button>
+                        <button
+                            className="action-button action-fix"
+                            onClick={handleSuggestFix}
+                            title="Get AI-suggested fix"
+                        >
+                            Suggest Fix
+                        </button>
+                    </>
+                )}
             </div>
 
             {/* ── Expandable evidence ── */}

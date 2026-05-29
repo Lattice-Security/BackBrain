@@ -83,7 +83,7 @@ export type ExtensionMessage =
     | { type: 'explanationComplete'; issueId: string; content: string; provider?: string | null }
     | { type: 'explanationError'; issueId: string; error: string; provider?: string | null }
     // Phase 10: Fix messages
-    | { type: 'fixApplied'; sessionId: string; summary: FixSummaryData }
+    | { type: 'fixApplied'; sessionId: string; summary: FixSummaryData; issueId?: string }
     | { type: 'fixReverted'; sessionId: string }
     | { type: 'fixHistory'; sessions: FixSessionData[] }
     | { type: 'fixError'; error: string }
