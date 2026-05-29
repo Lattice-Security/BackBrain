@@ -18,12 +18,13 @@ import { toError } from '../utils/result';
 
 const logger = createLogger('CliAgentReviewScanner');
 
-export type AgentBackendId = 'codex' | 'gemini' | 'opencode';
+export type AgentBackendId = 'codex' | 'gemini' | 'opencode' | 'groq';
 
 interface AgentBackendConfig {
     enabled: boolean;
     binaryPath: string;
     model?: string;
+    apiKey?: string;
 }
 
 interface ExecLikeError {
@@ -190,6 +191,11 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 binaryPath: 'opencode',
                 ...options.backends?.opencode,
             },
+            groq: {
+                enabled: true,
+                binaryPath: '',
+                ...options.backends?.groq,
+            },
         };
     }
 
@@ -222,6 +228,10 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 opencode: {
                     ...this.backends.opencode,
                     ...options.backends.opencode,
+                },
+                groq: {
+                    ...this.backends.groq,
+                    ...options.backends.groq,
                 },
             };
             this.readinessCache.clear();
@@ -800,6 +810,9 @@ export class CliAgentReviewScanner implements SecurityScanner {
     }
 
     private async checkBackendAvailable(id: AgentBackendId, config: AgentBackendConfig): Promise<boolean> {
+        if (id === 'groq') {
+            return !!config.apiKey;
+        }
         try {
             await this.execFileAsync(config.binaryPath, ['--version'], {
                 maxBuffer: 1024 * 1024,
@@ -828,6 +841,11 @@ export class CliAgentReviewScanner implements SecurityScanner {
             };
             this.readinessCache.set(id, state);
             return state;
+        }
+
+        // Groq is REST-based — no binary version check; probe the API directly.
+        if (id === 'groq') {
+            return this.probeGroqReadiness(config);
         }
 
         // Opencode model probe is unreliable inside Snap VSCode extension host
@@ -892,6 +910,58 @@ export class CliAgentReviewScanner implements SecurityScanner {
         }
     }
 
+    private async probeGroqReadiness(config: AgentBackendConfig): Promise<BackendReadinessState> {
+        if (!config.apiKey) {
+            const state: BackendReadinessState = {
+                ready: false,
+                diagnostics: {
+                    category: 'auth',
+                    hint: 'No Groq API key configured. Set backbrain.ai.agentGroqApiKey or paste one in the scan tab.',
+                },
+            };
+            this.readinessCache.set('groq', state);
+            return state;
+        }
+
+        try {
+            const probeOutput = await this.runBackendRest(
+                { id: 'groq', config },
+                'Return ONLY this exact JSON: {"ready":true}',
+                30_000,
+                { isReadinessProbe: true },
+            );
+            const parsed = this.extractJson(probeOutput) as { ready?: boolean };
+            const ready = parsed.ready === true;
+            const state: BackendReadinessState = { ready };
+            if (ready) {
+                this.readinessCache.set('groq', state);
+            } else {
+                logger.warn('Groq backend failed readiness probe');
+            }
+            return state;
+        } catch (error) {
+            const diagnostics = this.classifyBackendFailure('groq', error as ExecLikeError);
+            if (diagnostics.category === 'rate-limit') {
+                const state: BackendReadinessState = { ready: true, diagnostics };
+                this.readinessCache.set('groq', state);
+                return state;
+            }
+            const state: BackendReadinessState = { ready: false, diagnostics };
+            const isTransient = (
+                diagnostics.category === 'auth' ||
+                diagnostics.category === 'network' ||
+                diagnostics.category === 'unknown'
+            );
+            if (!isTransient) {
+                this.readinessCache.set('groq', state);
+            }
+            if (diagnostics.category === 'auth') {
+                this.onAuthFailure?.('groq');
+            }
+            return state;
+        }
+    }
+
     private async runBackendReadinessProbe(
         backend: { id: AgentBackendId; config: AgentBackendConfig },
         cwd: string,
@@ -911,6 +981,10 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 });
             case 'gemini':
                 return this.runGeminiReadinessProbe(backend, cwd);
+            case 'groq':
+                return this.runBackend([backend], prompt, cwd, 30_000, 'readiness-probe', {
+                    isReadinessProbe: true,
+                });
         }
     }
 
@@ -949,6 +1023,12 @@ export class CliAgentReviewScanner implements SecurityScanner {
         retryCount = 0,
     ): Promise<string> {
         const backend = backends[0]!;
+
+        // Groq is REST-based — route to direct API caller, avoiding spawn entirely.
+        if (backend.id === 'groq') {
+            return this.runBackendRest(backend, prompt, hardCeilingMs, options, retryCount, backends.slice(1));
+        }
+
         const { binary, args } = this.buildBackendArgs(backend, prompt);
 
         // Readiness probes stay on the old execFile path — they run infrequently,
@@ -1013,6 +1093,85 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 error: toError(error),
             });
             throw error;
+        }
+    }
+
+    private async runBackendRest(
+        backend: { id: AgentBackendId; config: AgentBackendConfig },
+        prompt: string,
+        hardCeilingMs: number,
+        options: BackendExecutionOptions,
+        retryCount = 0,
+        fallbackBackends?: Array<{ id: AgentBackendId; config: AgentBackendConfig }>,
+    ): Promise<string> {
+        const model = backend.config.model || 'llama-3.3-70b-versatile';
+        const apiKey = backend.config.apiKey || '';
+
+        if (!apiKey) {
+            const error = Object.assign(
+                new Error('No Groq API key configured.'),
+                { stdout: '', stderr: 'No Groq API key configured.' },
+            );
+            throw error;
+        }
+
+        const builtPrompt = this.buildBackendPrompt(backend.id, prompt);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), hardCeilingMs);
+
+        try {
+            const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: [{ role: 'user', content: builtPrompt }],
+                    temperature: 0.1,
+                    max_tokens: 4096,
+                }),
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                throw Object.assign(
+                    new Error(`Groq API returned ${response.status}: ${text.slice(0, 500)}`),
+                    { stdout: text, stderr: `HTTP ${response.status}` },
+                );
+            }
+
+            const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+            const content = data.choices?.[0]?.message?.content || '';
+            return this.normalizeBackendOutput(backend.id, content, options);
+        } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') {
+                throw Object.assign(
+                    new Error('Groq API request timed out'),
+                    { stdout: '', stderr: 'Groq API request timed out' },
+                );
+            }
+
+            const diagnostics = this.classifyBackendFailure(backend.id, error as ExecLikeError);
+
+            if (diagnostics.category === 'rate-limit' && retryCount < 3) {
+                const delay = (retryCount + 1) * 5_000;
+                const remaining = hardCeilingMs - delay;
+                if (remaining > 0) {
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    return this.runBackendRest(backend, prompt, remaining, options, retryCount + 1, fallbackBackends);
+                }
+            }
+
+            if (diagnostics.category === 'rate-limit' && fallbackBackends && fallbackBackends.length > 0) {
+                return this.runBackend(fallbackBackends, prompt, process.cwd(), hardCeilingMs, 'groq-fallback', options, 0);
+            }
+
+            throw error;
+        } finally {
+            clearTimeout(timeout);
         }
     }
 
@@ -1142,6 +1301,8 @@ export class CliAgentReviewScanner implements SecurityScanner {
                 args.push(builtPrompt);
                 return { binary: backend.config.binaryPath, args };
             }
+            case 'groq':
+                throw new Error('buildBackendArgs should not be called for groq — use runBackendRest instead');
         }
     }
 
@@ -1157,6 +1318,17 @@ export class CliAgentReviewScanner implements SecurityScanner {
         }
 
         if (backend === 'gemini') {
+            return [
+                'You are a security analysis agent operating in read-only mode.',
+                'CRITICAL: Return ONLY the JSON object specified below.',
+                'Do NOT add any prose before or after the JSON.',
+                'Do NOT wrap the JSON in markdown code fences.',
+                'Your entire response must be a single valid JSON object.',
+                prompt,
+            ].join('\n\n');
+        }
+
+        if (backend === 'groq') {
             return [
                 'You are a security analysis agent operating in read-only mode.',
                 'CRITICAL: Return ONLY the JSON object specified below.',
@@ -1206,6 +1378,13 @@ export class CliAgentReviewScanner implements SecurityScanner {
         if (backend === 'opencode') {
             const codexText = this.extractOpencodeText(trimmed);
             if (codexText) return codexText;
+        }
+
+        if (backend === 'groq' && options.expectsJsonObject) {
+            const jsonMatch = trimmed.match(/\{[\s\S]*\}$/);
+            if (jsonMatch) {
+                return jsonMatch[0];
+            }
         }
 
         return trimmed;

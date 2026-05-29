@@ -52,6 +52,12 @@ const AGENT_BACKENDS: Record<AgentBackendId, { label: string; description: strin
         binarySetting: 'ai.agentBinaryPathOpencode',
         defaultBinary: 'opencode',
     },
+    groq: {
+        label: 'Groq',
+        description: 'Groq REST API (no binary needed)',
+        binarySetting: 'ai.agentGroqApiKey',
+        defaultBinary: '',
+    },
 };
 
 
@@ -78,6 +84,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     private _debugMode = false;
     private _debugSteps: DebugStep[] = [];
     private _debugPhase = '';
+    private _isApiScan = false;
     private _selectedCustomPaths: string[] | null = null;
     private _selectedCustomDisplayNames: string[] = [];
     private _visualizerService = new VisualizerService();
@@ -175,7 +182,7 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
         const scannerNames = this._getEnabledScannerIds();
         const agentReviewEnabled = config.get<boolean>('ai.agentReviewEnabled', false);
         const enabledAgentBackends = config.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']);
-        if (agentReviewEnabled && enabledAgentBackends.length > 0) {
+        if ((agentReviewEnabled && enabledAgentBackends.length > 0) || this._isApiScan) {
             scannerNames.push('agent-review');
         }
         return scannerNames;
@@ -253,11 +260,14 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
     }
 
     private async _checkAgentBackendAvailability(
-        _backendId: AgentBackendId,
+        backendId: AgentBackendId,
         binaryPath: string,
-    ): Promise<{ available: boolean }> {
-        // Fast path: only check if the binary exists on PATH.
-        // Authentication is verified lazily when a scan starts.
+    ): Promise<{ available: boolean; authenticated?: boolean }> {
+        if (backendId === 'groq') {
+            const config = vscode.workspace.getConfiguration('backbrain');
+            const apiKey = config.get<string>('ai.agentGroqApiKey', '').trim();
+            return { available: apiKey.length > 0, authenticated: apiKey.length > 0 };
+        }
         return { available: await this._checkCliAvailable(binaryPath) };
     }
 
@@ -369,6 +379,29 @@ export class SeverityPanelProvider implements vscode.WebviewViewProvider {
                 case 'requestScanFile':
                     await this._handleScanFileRequest();
                     break;
+
+                case 'requestApiScan': {
+                    this._isApiScan = true;
+                    try {
+                        const agentScanner = this._securityService.getScanners().find(s => s.name === 'agent-review');
+                        if (agentScanner && 'configure' in agentScanner) {
+                            (agentScanner as { configure(options: Record<string, unknown>): void }).configure({
+                                preferredBackend: 'groq',
+                                backends: {
+                                    groq: {
+                                        enabled: true,
+                                        apiKey: message.apiKey,
+                                        model: message.model || 'llama-3.3-70b-versatile',
+                                    },
+                                },
+                            });
+                        }
+                        await this._handleScanRequest('workspace');
+                    } finally {
+                        this._isApiScan = false;
+                    }
+                    break;
+                }
 
                 case 'refreshConfiguration':
                     await this.syncConfigurationState(true);

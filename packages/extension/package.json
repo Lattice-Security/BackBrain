@@ -264,6 +264,16 @@
           "type": "string",
           "default": "",
           "description": "Optional override path for the OpenCode CLI binary"
+        },
+        "backbrain.ai.agentGroqApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Groq API key for direct REST-based AI agent review (no CLI binary needed)"
+        },
+        "backbrain.ai.agentGroqModel": {
+          "type": "string",
+          "default": "llama-3.3-70b-versatile",
+          "description": "Groq model override for AI agent review"
         }
       }
     },

@@ -208,7 +208,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration('backbrain');
     const aiReviewEnabled = config.get<boolean>('ai.agentReviewEnabled', false);
     const enabledAgentBackends = config.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']);
-    const preferredAgentBackend = config.get<'codex' | 'gemini' | 'opencode'>('ai.agentPreferredBackend', 'opencode');
+    const preferredAgentBackend = config.get<'codex' | 'gemini' | 'opencode' | 'groq'>('ai.agentPreferredBackend', 'groq');
     const agentScanDepth = config.get<AgentScanDepth>('ai.agentScanDepth', 'developer');
     const tierConfig = resolveScanDepthConfig(agentScanDepth);
 
@@ -226,10 +226,14 @@ export async function activate(context: vscode.ExtensionContext) {
       gemini: config.get<string>('ai.agentBinaryPathGemini', '').trim(),
       opencode: config.get<string>('ai.agentBinaryPathOpencode', '').trim(),
     };
+    const agentApiKeys = {
+      groq: config.get<string>('ai.agentGroqApiKey', '').trim(),
+    };
     const agentModelOverrides = {
       codex: config.get<string>('ai.agentCodexModel', '').trim(),
       gemini: '',
       opencode: config.get<string>('ai.agentOpencodeModel', '').trim(),
+      groq: config.get<string>('ai.agentGroqModel', '').trim(),
     };
     logger.info('AI agent review configuration', {
       enabled: aiReviewEnabled,
@@ -278,6 +282,11 @@ export async function activate(context: vscode.ExtensionContext) {
           enabled: enabledAgentBackends.includes('opencode'),
           ...(agentBinaryPaths.opencode ? { binaryPath: agentBinaryPaths.opencode } : {}),
           ...(agentModelOverrides.opencode ? { model: agentModelOverrides.opencode } : {}),
+        },
+        groq: {
+          enabled: enabledAgentBackends.includes('groq'),
+          ...(agentApiKeys.groq ? { apiKey: agentApiKeys.groq } : {}),
+          ...(agentModelOverrides.groq ? { model: agentModelOverrides.groq } : {}),
         },
       },
       onAuthFailure: (backend) => {
@@ -424,7 +433,7 @@ export async function activate(context: vscode.ExtensionContext) {
       const latestDepth = latestConfig.get<AgentScanDepth>('ai.agentScanDepth', 'developer');
       const latestTier = resolveScanDepthConfig(latestDepth);
       const latestEnabledBackends = latestConfig.get<string[]>('ai.agentBackends', ['codex', 'gemini', 'opencode']);
-      const latestPreferredBackend = latestConfig.get<'codex' | 'gemini' | 'opencode'>('ai.agentPreferredBackend', 'opencode');
+      const latestPreferredBackend = latestConfig.get<'codex' | 'gemini' | 'opencode' | 'groq'>('ai.agentPreferredBackend', 'groq');
       const latestReviewScope = latestConfig.get<'workspace' | 'changed-files' | 'both'>('ai.agentReviewScope', 'both');
       const latestMaxSpecialistsInspect = latestConfig.inspect<number>('ai.maxAgentSpecialists');
       const latestSpecialistConcurrencyInspect = latestConfig.inspect<number>('ai.agentSpecialistConcurrency');
@@ -437,6 +446,8 @@ export async function activate(context: vscode.ExtensionContext) {
       };
       const latestCodexModel = latestConfig.get<string>('ai.agentCodexModel', '').trim();
       const latestOpencodeModel = latestConfig.get<string>('ai.agentOpencodeModel', '').trim();
+      const latestGroqApiKey = latestConfig.get<string>('ai.agentGroqApiKey', '').trim();
+      const latestGroqModel = latestConfig.get<string>('ai.agentGroqModel', '').trim();
 
       agentReviewScanner.configure({
         maxSpecialists: latestMaxSpecialists,
@@ -458,6 +469,11 @@ export async function activate(context: vscode.ExtensionContext) {
             enabled: latestEnabledBackends.includes('opencode'),
             binaryPath: latestBinaryPaths.opencode || 'opencode',
             ...(latestOpencodeModel ? { model: latestOpencodeModel } : {}),
+          },
+          groq: {
+            enabled: latestEnabledBackends.includes('groq'),
+            ...(latestGroqApiKey ? { apiKey: latestGroqApiKey } : {}),
+            ...(latestGroqModel ? { model: latestGroqModel } : {}),
           },
         },
       });

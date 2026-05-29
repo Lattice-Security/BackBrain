@@ -60,7 +60,8 @@ export type WebviewMessage =
     | { type: 'exportReport' }
     | { type: 'setDebugMode'; enabled: boolean }
     | { type: 'requestGraphData'; paths?: string[] }
-    | { type: 'openVisualizerTab' };
+    | { type: 'openVisualizerTab' }
+    | { type: 'requestApiScan'; apiKey: string; model: string }; // Groq REST API scan
 
 // ============================================================================
 // Extension → Webview Messages
@@ -96,7 +97,7 @@ export type ExtensionMessage =
 // ============================================================================
 
 export type ScanTarget = 'file' | 'workspace' | 'changed' | 'custom';
-export type AgentBackendId = 'codex' | 'gemini' | 'opencode';
+export type AgentBackendId = 'codex' | 'gemini' | 'opencode' | 'groq';
 export type AgentScanDepth = 'developer' | 'team' | 'security' | 'audit';
 
 export interface ScannerState {
