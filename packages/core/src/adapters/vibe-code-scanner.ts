@@ -2,24 +2,6 @@ import type { SecurityScanner, SecurityIssue, ScanResult } from '../ports';
 import type { FileSystem } from '../ports';
 import { DEFAULT_VIBE_RULES, type VibeRule } from '../config/vibe-rules';
 import * as fs from 'fs';
-import * as path from 'path';
-
-// Node.js built-in modules that don't need to be in package.json
-const NODE_BUILTINS = new Set([
-  'assert', 'buffer', 'child_process', 'cluster', 'console', 'constants',
-  'crypto', 'dgram', 'dns', 'domain', 'events', 'fs', 'http', 'http2',
-  'https', 'inspector', 'module', 'net', 'os', 'path', 'perf_hooks',
-  'process', 'punycode', 'querystring', 'readline', 'repl', 'stream',
-  'string_decoder', 'sys', 'timers', 'tls', 'trace_events', 'tty', 'url',
-  'util', 'v8', 'vm', 'wasi', 'worker_threads', 'zlib',
-  // With node: prefix
-  'node:assert', 'node:buffer', 'node:child_process', 'node:cluster',
-  'node:crypto', 'node:dns', 'node:events', 'node:fs', 'node:http',
-  'node:http2', 'node:https', 'node:net', 'node:os', 'node:path',
-  'node:process', 'node:readline', 'node:stream', 'node:timers',
-  'node:tls', 'node:url', 'node:util', 'node:v8', 'node:vm',
-  'node:worker_threads', 'node:zlib'
-]);
 
 export class VibeCodeScanner implements SecurityScanner {
   readonly name = 'vibe-code';
@@ -75,7 +57,6 @@ export class VibeCodeScanner implements SecurityScanner {
     // Run built-in detectors
     issues.push(...this.detectUnhandledPromises(filePath, cleanLines));
     issues.push(...this.detectTypeMismatches(filePath, cleanLines));
-    issues.push(...await this.detectHallucinatedDeps(filePath, content));
 
     return issues.filter(i => i.confidence === 'high');
   }
@@ -304,130 +285,6 @@ export class VibeCodeScanner implements SecurityScanner {
 
     return issues;
   }
-
-  /**
-   * Detect imports that don't exist in package.json (hallucinated dependencies)
-   */
-  private async detectHallucinatedDeps(filePath: string, content: string): Promise<SecurityIssue[]> {
-    const issues: SecurityIssue[] = [];
-
-    // Only check JS/TS files
-    if (!/\.(js|ts|jsx|tsx)$/.test(filePath)) {
-      return issues;
-    }
-
-    // Skip TypeScript declaration files — they contain type-only imports
-    // for @types/* packages that are not runtime dependencies.
-    if (/\.d\.(ts|tsx|mts|cts)$/.test(filePath)) {
-      return issues;
-    }
-
-    // Strip multi-line comments (including JSDoc) and single-line comments
-    // so code examples inside JSDoc blocks are not parsed as real imports.
-    const cleanedContent = content
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/\/\/.*$/gm, '');
-
-    // Extract all imports
-    const importLines: { module: string; line: number; snippet: string }[] = [];
-    const lines = cleanedContent.split('\n');
-
-    // Match ES6 imports and require statements
-    const importPatterns = [
-      /import\s+.*\s+from\s+['"]([@\w\/-]+)['"]/,
-      /import\s+['"]([@\w\/-]+)['"]/,
-      /require\s*\(\s*['"]([@\w\/-]+)['"]\s*\)/
-    ];
-
-    lines.forEach((line, idx) => {
-      for (const pattern of importPatterns) {
-        const match = line.match(pattern);
-        if (match && match[1]) {
-          const moduleName = match[1];
-          // Skip relative imports and built-ins
-          if (moduleName.startsWith('.') || moduleName.startsWith('/')) continue;
-          if (NODE_BUILTINS.has(moduleName)) continue;
-          // Also skip Node sub-path exports (e.g. path/posix, fs/promises, stream/web)
-          const topLevel = moduleName.split('/')[0];
-          if (NODE_BUILTINS.has(topLevel) || NODE_BUILTINS.has(`node:${topLevel}`)) continue;
-
-          // Get the package name (handle scoped packages like @org/pkg)
-          let pkgName: string;
-          if (moduleName.startsWith('@')) {
-            const parts = moduleName.split('/');
-            pkgName = parts.slice(0, 2).join('/');
-          } else {
-            pkgName = moduleName.split('/')[0] ?? moduleName;
-          }
-
-          importLines.push({ module: pkgName, line: idx + 1, snippet: line.trim() });
-        }
-      }
-    });
-
-    if (importLines.length === 0) return issues;
-
-    // Find ALL package.json files walking up to root
-    const allPackageJsons = await this.findAllPackageJson(filePath);
-    if (allPackageJsons.length === 0) return issues;
-
-    // Merge deps from all levels into one set
-    const allDeps = new Set<string>();
-    for (const pkg of allPackageJsons) {
-      for (const key of Object.keys(pkg.dependencies || {})) allDeps.add(key);
-      for (const key of Object.keys(pkg.devDependencies || {})) allDeps.add(key);
-      for (const key of Object.keys(pkg.peerDependencies || {})) allDeps.add(key);
-      for (const key of Object.keys(pkg.optionalDependencies || {})) allDeps.add(key);
-    }
-
-    // Check each import against all discovered dependencies
-    for (const { module: moduleName, line, snippet } of importLines) {
-      if (!allDeps.has(moduleName)) {
-        issues.push({
-          ruleId: 'vibe-code.hallucinated-dep',
-          title: 'Hallucinated Dependency',
-          description: `Module '${moduleName}' is imported but not found in any package.json`,
-          severity: 'high',
-          confidence: 'high',
-          filePath,
-          line,
-          snippet,
-        });
-      }
-    }
-
-    return issues;
-  }
-
-  /**
-   * Find ALL package.json files walking up the directory tree to root
-   */
-  private async findAllPackageJson(filePath: string): Promise<Array<{
-    dependencies?: Record<string, string>;
-    devDependencies?: Record<string, string>;
-    peerDependencies?: Record<string, string>;
-    optionalDependencies?: Record<string, string>;
-  }>> {
-    const results: Array<{
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-      peerDependencies?: Record<string, string>;
-      optionalDependencies?: Record<string, string>;
-    }> = [];
-    let dir = path.dirname(filePath);
-    const root = path.parse(dir).root;
-
-    while (dir !== root) {
-      const pkgPath = path.join(dir, 'package.json');
-      try {
-        const content = await this.readFile(pkgPath);
-        results.push(JSON.parse(content));
-      } catch {
-        // no package.json at this level
-      }
-      dir = path.dirname(dir);
-    }
-
-    return results;
-  }
 }
+
+
