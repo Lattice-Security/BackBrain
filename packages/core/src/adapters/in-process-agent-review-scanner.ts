@@ -13,6 +13,7 @@ import type {
 } from '../ports';
 import { createLogger } from '../utils/logger';
 import { toError } from '../utils/result';
+import { loadKnowledge, formatKnowledgeBlock } from '../config/knowledge-loader.js';
 import type { VercelAIAdapter } from './vercel-ai-adapter';
 
 const logger = createLogger('InProcessAgentReviewScanner');
@@ -204,9 +205,31 @@ export class InProcessAgentReviewScanner implements SecurityScanner {
             message: 'AI review planner analysing repository structure.',
         });
 
+        const knowledge = loadKnowledge();
+        if (knowledge) {
+            logger.info('Loaded security intelligence context', {
+                trends: knowledge.trends.split('\n').filter(l => l.startsWith('- ')).length,
+                catalog: knowledge.vulnerabilityCatalog.split('\n').filter(l => l.startsWith('- ')).length,
+            });
+        } else {
+            logger.warn('Security intelligence context not available — knowledge files missing from packages/core/src/knowledge/');
+        }
+
         let planner: PlannerOutput;
         try {
             const repoTree = await this.buildRepoTree(repositoryRoot, 3);
+            const promptParts: string[] = [
+                `Repository root: ${repositoryRoot}`,
+                `Requested scan paths:\n${effectivePaths.join('\n')}`,
+                `Changed files:\n${changedFiles.join('\n') || 'none detected'}`,
+                'Deterministic findings:',
+                this.summarizeDeterministicIssues(deterministicIssues),
+                'Repository structure:',
+                repoTree,
+            ];
+            if (knowledge) {
+                promptParts.push(formatKnowledgeBlock(knowledge));
+            }
             const plannerResult = await generateObject({
                 model,
                 schema: plannerSchema,
@@ -217,15 +240,7 @@ export class InProcessAgentReviewScanner implements SecurityScanner {
                     `Emit at most ${this.maxSpecialists} specialists.`,
                     'Each specialist must have: a unique role name, rationale, focus area, relevant paths, and specific security checks.',
                 ].join('\n'),
-                prompt: [
-                    `Repository root: ${repositoryRoot}`,
-                    `Requested scan paths:\n${effectivePaths.join('\n')}`,
-                    `Changed files:\n${changedFiles.join('\n') || 'none detected'}`,
-                    'Deterministic findings:',
-                    this.summarizeDeterministicIssues(deterministicIssues),
-                    'Repository structure:',
-                    repoTree,
-                ].join('\n\n'),
+                prompt: promptParts.join('\n\n'),
             });
             planner = plannerResult.object;
         } catch (error) {

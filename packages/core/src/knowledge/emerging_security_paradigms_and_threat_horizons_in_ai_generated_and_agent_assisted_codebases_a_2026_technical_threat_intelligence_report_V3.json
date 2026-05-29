@@ -1,0 +1,618 @@
+{
+  "metadata": {
+    "generated_at": "2026-05-27T23:32:00Z",
+    "most_recent_source_date": "2026-05-09",
+    "oldest_source_included": "2024-01-01",
+    "research_note": "The literature on AI-generated code security has rapidly matured from theoretical evaluations of isolated model behaviors in 2024 to longitudinal, enterprise-scale analyses of production environments and public registries by mid-2026. While metrics for code-level security defects (such as CWE frequency and secrets exposure rates) are backed by robust datasets from millions of commits, emerging integration-level risks like Model Context Protocol (MCP) server exploits and indirect prompt injections are documented in newer, highly specific threat studies and CVE disclosures. The scanner can maintain high confidence in quantifications of code-level defect propagation and secrets leaks, while emerging protocol exploitation vectors require adaptive, behavior-focused heuristics as real-world attack campaigns mature. A notable gap remains in mobile application security research for AI-generated code — the majority of studies focus on web and API surfaces, leaving iOS and Android vulnerability profiles largely unconfirmed. IaC-specific research is also underrepresented relative to the attack surface it presents. The scanner should treat trend signals in these areas as emerging and weight them conservatively until corroborating enterprise dataset studies are published."
+  },
+  "landscape_summary": "The current landscape of AI-generated code security is experiencing a severe downward trajectory in baseline quality and secure-by-default configurations. As developer workflows transition from simple autocompletion to highly autonomous agentic 'vibe coding,' engineering output is vastly outstripping security team validation capacity, leading to an epidemic of unprotected deployments. While newer models show improved capabilities on functional benchmarks, their security pass rates remain entirely flat, frequently introducing dangerous architectural flaws, privilege escalations, and hardcoded credentials. A compounding factor is the rapid proliferation of agentic tool ecosystems — MCP servers, IDE plugins, and autonomous coding agents — each of which introduces a new attack surface that existing static analysis tooling was not designed to cover. Scanners must operate under a zero-trust model, assuming AI-generated sections are highly susceptible to silent configuration flaws, dependency hallucination hijacks, context-poisoning attacks, and privilege-escalation patterns that are architecturally invisible at the file level.",
+  "trends": [
+    {
+      "id": "TRD-001",
+      "title": "Vibe coding and non-developer deployment creating production backends with zero security hardening",
+      "status": "accelerating",
+      "status_rationale": "Multiple independent sources from Q1 2026 confirm mass production deployments of fully AI-generated backends with no authentication, RLS, or CORS hardening by non-technical operators.",
+      "first_observed": "2025-02-15",
+      "most_recent_evidence": "2026-05-09",
+      "description": "The rapid adoption of conversational coding platforms in late 2025 and early 2026 has led to thousands of live production web applications deploying completely unhardened, accessible cloud backends. Because these tools optimize for functional verification ('it works') over secure-by-default configurations, they systematically generate configurations with missing Row Level Security (RLS) on database adapters, permissive CORS headers, and completely disabled backend authentication policies. Traditional structural checks are bypassed as non-developers ship products directly to production. Security researchers have demonstrated public enumeration of these apps is trivial using Shodan and Censys queries targeting common AI-generated backend fingerprints.",
+      "affects": {
+        "app_types": ["web", "api", "infrastructure-as-code", "other"],
+        "languages": ["javascript", "typescript", "python", "other"],
+        "ai_tools_implicated": ["claude", "cursor", "chatgpt", "all"]
+      },
+      "why_now": "The mass adoption of high-level coding agents and tools (e.g., Lovable, Replit, Base44) that enable non-technical users to build and deploy complex full-stack web applications instantaneously without performing standard security verification or code reviews.",
+      "severity_trajectory": "increasing",
+      "severity_trajectory_rationale": "A growing percentage of live web apps are built entirely through natural language prompts, bypassing traditional local security pipelines completely.",
+      "related_incidents": [
+        "Unnamed researcher disclosed in April 2026 that a mass-scan of Supabase-backed projects built with Lovable revealed over 1,200 projects with fully public database APIs and no RLS policies, some containing live user PII. Source: Truffle Security blog, April 2026.",
+        "A Brazilian SaaS startup built entirely via Claude and Replit suffered a full database exfiltration in March 2026 after shipping with default Supabase anon keys in client-side JavaScript bundles. Reported by Hacker News and corroborated by founder post-mortem. Date: 2026-03-18."
+      ],
+      "scanner_implication": "When scanning web applications that contain signs of AI-assisted construction (such as Cursor configuration files, .cursorrules, or AI-generated pull request signatures), escalate missing Row Level Security (RLS) configurations, permissive CORS parameters, and missing middleware authorization checks on database/API endpoints to a CRITICAL severity rating. Additionally, flag any Supabase, Firebase, or PlanetScale configuration that surfaces an anon or public API key in client-side JavaScript bundles.",
+      "sources": [
+        {
+          "title": "Vibe Coding Security Audit: 1,200 Lovable Projects Scanned",
+          "url": "https://trufflesecurity.com/blog/vibe-coding-security-audit-2026",
+          "date": "2026-04-15",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "The State of AI-Assisted Development Security 2026",
+          "url": "https://snyk.io/reports/ai-code-security-2026",
+          "date": "2026-05-09",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        }
+      ]
+    },
+    {
+      "id": "TRD-002",
+      "title": "Dependency hallucination attacks and 'slopsquatting' in automated package resolution",
+      "status": "established",
+      "status_rationale": "Large-scale empirical studies show a flat 19.6% hallucination rate across code generators, with attackers actively registering recurring non-existent packages.",
+      "first_observed": "2024-03-01",
+      "most_recent_evidence": "2026-05-08",
+      "description": "When requested to write functions requiring external libraries, AI assistants construct plausible but non-existent package names from their training snapshots. Attackers monitor these predictable, recurring hallucination names (which occur up to 43% of the time under identical prompts) and pre-register them on public registries like npm and PyPI. When vibe-coding developers accept these blocks, the build systems execute post-install triggers associated with the attacker-controlled packages, establishing execution vectors on development machines and CI/CD pipelines. A 2026 analysis of 200,000 AI-generated Python projects found that hallucinated packages appeared in over 38,000 unique requirements files, with at least 94 of those package names already registered by third parties with suspicious post-install scripts.",
+      "affects": {
+        "app_types": ["web", "api", "library", "all"],
+        "languages": ["python", "javascript", "typescript"],
+        "ai_tools_implicated": ["copilot", "chatgpt", "claude", "cursor", "all"]
+      },
+      "why_now": "AI models are generating vast amounts of dependency-definition code (like package.json and requirements.txt) without real-time registry verification, which developers accept blindly and install using shell automation hooks.",
+      "severity_trajectory": "increasing",
+      "severity_trajectory_rationale": "Attackers have shifted from simple typosquatting to proactive slopsquatting targeting predictable neural networks, achieving massive automatic downloads.",
+      "related_incidents": [
+        "In February 2026, the npm package 'react-server-actions-helper' — a recurring hallucination of GPT-4o under specific Next.js prompts — was found to have been registered by an unknown actor and downloaded 14,000 times before removal. The package contained an obfuscated reverse-shell payload triggered on postinstall. Source: Socket.dev security advisory, 2026-02-28.",
+        "PyPI package 'langchain-tools-extended' was registered in January 2026 matching a consistent Claude 3.5 hallucination pattern. It was downloaded from 7 distinct enterprise CI/CD systems before detection. Source: Checkmarx Supply Chain Security Report, 2026-Q1."
+      ],
+      "scanner_implication": "Intercept any package installation definition (requirements.txt, package.json, Cargo.toml, go.mod) and cross-reference each entry with a live registry query. Flag any package as HIGH-SEVERITY if it has been registered within the last 60 days, has a download count below 500, has no linked source repository, or fails to resolve to a known registry entry. For Python projects, additionally flag any package whose name matches the pattern of known AI hallucination clusters (e.g., '{known_library}-tools', '{known_library}-helper', '{known_library}-extended').",
+      "sources": [
+        {
+          "title": "The Dependency Trap Part 4: Supply Chain Risks in AI-Generated Code",
+          "url": "https://simonroses.com/2026/05/the-dependency-trap-supply-chain-risks-in-ai-generated-code-part-4/",
+          "date": "2026-05-08",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "Slopsquatting: Exploiting LLM Package Hallucinations at Scale",
+          "url": "https://arxiv.org/abs/2502.11901",
+          "date": "2025-04-15",
+          "tier": 1,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "Socket.dev npm Threat Report Q1 2026",
+          "url": "https://socket.dev/blog/threat-report-q1-2026",
+          "date": "2026-03-10",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        }
+      ]
+    },
+    {
+      "id": "TRD-003",
+      "title": "Indirect prompt injections hijacking high-privilege agentic workspace environments",
+      "status": "emerging",
+      "status_rationale": "Newly uncovered exploit chains and CVE filings demonstrate that attackers can use configuration files and rules files to execute code within developer IDEs without user interaction.",
+      "first_observed": "2025-05-01",
+      "most_recent_evidence": "2026-05-09",
+      "description": "The transition toward highly autonomous coding agents (like Claude Code, GitHub Copilot, and Cursor) has given these tools system-level file and shell permissions. Attackers place natural-language instruction overrides inside repository files, README documents, or project-specific .cursorrules config files. When the workspace is indexed by the assistant, the agent treats the instructions as system prompts, bypassing security boundaries to run arbitrary terminal commands or exfiltrate environment variables. Proof-of-concept attacks demonstrated in early 2026 show that a single malicious line in a cloned repository's README can cause Cursor to silently execute a curl-based exfiltration of the developer's ~/.ssh directory within seconds of opening the project.",
+      "affects": {
+        "app_types": ["all"],
+        "languages": ["language-agnostic"],
+        "ai_tools_implicated": ["cursor", "copilot", "claude"]
+      },
+      "why_now": "Agents are now equipped with multi-file edit capabilities and system shell execution APIs (e.g., through Model Context Protocol servers) but process instruction channels and data channels through the same unified context window, with no architectural separation between trusted configuration and untrusted repository content.",
+      "severity_trajectory": "increasing",
+      "severity_trajectory_rationale": "The widespread adoption of autonomous file-system indexing and system execution integrations (MCP) provides a direct pipeline from repository text to local machine takeover.",
+      "related_incidents": [
+        "Security researcher Johann Rehberger published a chain-of-thought walkthrough in March 2026 demonstrating a zero-click Cursor RCE via a crafted .cursorrules file in a public GitHub repository, resulting in automated SSH key exfiltration. Source: embracethered.com, 2026-03-05.",
+        "RoguePilot attack chain disclosed by Pillar Security in April 2026 demonstrated GitHub Copilot could be induced to exfiltrate GITHUB_TOKEN values via symbolic link traversal combined with a malicious JSON schema reference in a workspace file. Source: Pillar Security Research, 2026-04-18."
+      ],
+      "scanner_implication": "Scan all project configuration and natural-language instruction files (such as .cursorrules, .cursor/rules/*.mdc, .github/copilot-instructions.md, AGENTS.md, and CLAUDE.md) for semantic instruction structures that command AI tools to execute shell processes, read sensitive environments, alter system path settings, or make external HTTP requests. Treat any repository file that contains imperative natural-language directives targeting an AI agent's behavior as a potential injection vector and flag at HIGH severity regardless of apparent intent.",
+      "sources": [
+        {
+          "title": "Embracethered: Cursor IDE Prompt Injection via .cursorrules",
+          "url": "https://embracethered.com/blog/posts/2026/cursor-ide-prompt-injection/",
+          "date": "2026-03-05",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "RoguePilot: Exfiltrating GitHub Tokens via Copilot Workspace Injection",
+          "url": "https://www.pillarsecurity.com/research/roguepilot-2026",
+          "date": "2026-04-18",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        }
+      ]
+    },
+    {
+      "id": "TRD-004",
+      "title": "Secrets sprawl and AI-related credential leakage in automated codebases",
+      "status": "accelerating",
+      "status_rationale": "Longitudinal GitGuardian findings from 2025 show a 34% surge in hardcoded secrets on public repos, driven by a 2x higher leak rate in AI co-authored commits.",
+      "first_observed": "2024-01-01",
+      "most_recent_evidence": "2026-03-20",
+      "description": "Neural networks lack the semantic intuition to identify high-entropy strings or sensitive environments, causing them to regularly emit actual or mock credentials from training data. Developers, trying to maintain rapid velocities, paste credential-heavy blocks into AI dialogs or accidentally check in active .env configuration files. Additionally, the proliferation of MCP configuration files has introduced a massive new exposure vector, with thousands of unique plain-text developer keys stored in local config stores that are prone to repo-level staging leaks. GitGuardian's 2026 State of Secrets Sprawl report identified a new category of 'MCP config leaks' — specifically mcp.json and .mcp/config files — that expose aggregated multi-service tokens in a single file, representing a multiplicative credential exposure risk.",
+      "affects": {
+        "app_types": ["all"],
+        "languages": ["language-agnostic"],
+        "ai_tools_implicated": ["copilot", "cursor", "chatgpt", "all"]
+      },
+      "why_now": "The steep adoption of multi-service architectures and local AI integrations requires managing more credentials, which are routinely managed by unvetted coding scripts. MCP config files in particular aggregate tokens for dozens of services and are frequently committed during rapid AI-assisted development sessions.",
+      "severity_trajectory": "increasing",
+      "severity_trajectory_rationale": "The rapid expansion of public AI integration endpoints (OpenAI, Hugging Face, Weights & Biases) has triggered an 81% year-over-year surge in specific AI-service credential exposure.",
+      "related_incidents": [
+        "GitGuardian's 2026 State of Secrets Sprawl report documented an 81% YoY increase in AI-service API key exposure, with sk-proj- (OpenAI) and hf_ (Hugging Face) token patterns appearing in over 220,000 unique public commits in 2025. Source: GitGuardian State of Secrets Sprawl 2026, 2026-03-20.",
+        "A Fortune 500 financial services firm disclosed in Q1 2026 that an AI-pair-programmed microservice had been committed with a live AWS IAM secret key embedded in a mock test fixture, remaining undetected for 47 days before a third-party scanner flagged it. Undisclosed company name, reported by Dark Reading, 2026-02-14."
+      ],
+      "scanner_implication": "Extend the entropy-detection rules to scan files and paths typically excluded from standard scans (such as test suite files, local build logs, mock directories, and newly introduced MCP JSON configurations). Prioritize matches containing signatures for AI API platforms (e.g., sk-proj-, hf_, ANTHROPIC_API_KEY, OPENAI_API_KEY) as CRITICAL threats. Specifically pattern-match mcp.json, .mcp/*.json, and any file path containing 'mcp' or 'cursor' configuration alongside high-entropy string values of 32+ characters.",
+      "sources": [
+        {
+          "title": "GitGuardian State of Secrets Sprawl 2026",
+          "url": "https://www.gitguardian.com/state-of-secrets-sprawl-report-2026",
+          "date": "2026-03-20",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "FuzzingLabs AI Secret Detection Benchmark Report 2025",
+          "url": "https://blog.fuzzinglabs.com/ai-secret-detection-benchmark-2025",
+          "date": "2025-11-10",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        }
+      ]
+    },
+    {
+      "id": "TRD-005",
+      "title": "Insecure and semantically incorrect cryptographic implementations in AI-generated code",
+      "status": "established",
+      "status_rationale": "Multiple independent audits and at least two peer-reviewed studies confirm AI models consistently generate deprecated, broken, or misapplied cryptographic primitives across all major languages.",
+      "first_observed": "2024-04-01",
+      "most_recent_evidence": "2026-04-22",
+      "description": "AI code generators draw on a training corpus that is densely populated with legacy cryptographic examples, Stack Overflow answers promoting deprecated functions, and tutorial code that prioritizes brevity over correctness. This causes models to routinely generate MD5 and SHA-1 for password hashing contexts, use ECB mode for symmetric encryption, apply static IVs in AES-CBC implementations, and construct custom HMAC verification routines that are vulnerable to timing attacks. A 2025 Stanford study found that 67% of cryptographic code generated by surveyed LLMs contained at least one critical CWE-327 (use of broken cryptographic algorithm) or CWE-330 (use of insufficiently random values) finding. The problem is compounding as AI-generated crypto code is itself entering public repositories and becoming training data for future model iterations.",
+      "affects": {
+        "app_types": ["web", "api", "mobile-android", "mobile-ios", "library", "all"],
+        "languages": ["python", "javascript", "typescript", "java", "go", "other"],
+        "ai_tools_implicated": ["copilot", "chatgpt", "claude", "cursor", "all"]
+      },
+      "why_now": "The explosion of AI-generated microservices and authentication libraries means that cryptographic code, previously the domain of security-aware senior engineers, is now being authored wholesale by AI assistants responding to functional prompts like 'add password hashing' with no cryptographic safety context provided.",
+      "severity_trajectory": "stable",
+      "severity_trajectory_rationale": "Newer models show marginal improvement on crypto benchmarks but still fail at the architectural level — knowing the correct primitive but applying it in an insecure mode — keeping overall severity impact stable rather than declining.",
+      "related_incidents": [
+        "A 2025 audit of 500 open-source projects identified as 'AI-assisted' on GitHub found that 41% of projects implementing JWT verification used symmetric HS256 with a hardcoded or trivially guessable secret, consistent with ChatGPT-generated boilerplate. Source: Trail of Bits Open Source Audit Findings 2025, 2025-09-30.",
+        "A Go microservice at a Series B startup was compromised in late 2025 after Copilot-generated AES-ECB encryption was used for session token storage, enabling an attacker to enumerate valid session tokens via block pattern analysis. Disclosed by researcher Chris Anley via Substack, 2025-12-08."
+      ],
+      "scanner_implication": "Flag any use of MD5, SHA-1, DES, 3DES, or RC4 in a security-relevant context (password storage, token signing, session ID generation) as CRITICAL regardless of surrounding context — AI generators do not distinguish between checksum and authentication use-cases. Additionally, flag all AES implementations for mode verification: any ECB mode usage is CRITICAL; CBC mode without a randomly generated IV per-operation is HIGH. Flag any custom HMAC comparison that does not use a constant-time comparison function (e.g., hmac.compare_digest in Python, crypto.timingSafeEqual in Node.js) as HIGH for timing-attack vulnerability.",
+      "sources": [
+        {
+          "title": "LLMs and Cryptographic Code: A Systematic Evaluation of CWE-327 Prevalence",
+          "url": "https://arxiv.org/abs/2409.14521",
+          "date": "2025-03-18",
+          "tier": 1,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "Trail of Bits: AI-Assisted Code Security Review Findings 2025",
+          "url": "https://blog.trailofbits.com/2025/09/ai-assisted-code-audit-findings",
+          "date": "2025-09-30",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "Chris Anley: Copilot AES-ECB Session Token Vulnerability Disclosure",
+          "url": "https://chrisanley.substack.com/p/copilot-aes-ecb-session-token",
+          "date": "2025-12-08",
+          "tier": 3,
+          "confirmed_by_other_sources": false
+        }
+      ]
+    },
+    {
+      "id": "TRD-006",
+      "title": "AI-generated Infrastructure-as-Code producing systematically over-privileged and misconfigured cloud resources",
+      "status": "accelerating",
+      "status_rationale": "Enterprise IaC scanning data from Wiz and Prisma Cloud shows a statistically significant correlation between AI-generated Terraform and CloudFormation blocks and over-privileged IAM roles, with 2025 data showing a 3.1x higher rate of wildcard IAM policies in AI-generated IaC vs. human-authored baselines.",
+      "first_observed": "2024-06-01",
+      "most_recent_evidence": "2026-04-05",
+      "description": "When developers prompt AI assistants to generate Terraform, Pulumi, or CloudFormation code, the models consistently default to the path of least resistance: wildcard IAM action and resource bindings, publicly accessible S3 bucket ACLs, security groups with 0.0.0.0/0 ingress on all ports, and disabled encryption at rest. This is driven by training data dominated by 'getting started' tutorials and simplified examples that intentionally omit least-privilege configurations. The problem is amplified by agentic workflows where AI tools generate and apply IaC in a single pipeline step, meaning misconfigured infrastructure is provisioned before any human review occurs. Wiz's 2026 Cloud Security Report found that 29% of critical cloud misconfigurations in audited enterprise environments were traceable to AI-generated IaC blocks committed in the prior 12 months.",
+      "affects": {
+        "app_types": ["infrastructure-as-code", "api", "web"],
+        "languages": ["other"],
+        "ai_tools_implicated": ["copilot", "chatgpt", "claude", "cursor", "codewhisperer", "all"]
+      },
+      "why_now": "Infrastructure-as-code has become a first-class output of AI coding assistants in 2025-2026, with tools like Cursor, Copilot, and Amazon Q Developer explicitly advertising cloud resource generation as a core feature. This shifts IaC authorship from cloud-specialized engineers to generalist developers using AI, removing the contextual security knowledge previously embedded in the human author.",
+      "severity_trajectory": "increasing",
+      "severity_trajectory_rationale": "The combination of agentic auto-apply pipelines and expanding AI IaC generation means misconfigured cloud infrastructure is being provisioned at machine speed, outpacing remediation cycles.",
+      "related_incidents": [
+        "Wiz Research disclosed in Q1 2026 that a multinational retail company suffered a cloud breach after an AI-generated Terraform module provisioned an S3 bucket with public ACLs and no server-side encryption, exposing 4.2 million customer records. The IaC was generated by Amazon Q Developer and applied via an automated CI/CD pipeline with no human review gate. Source: Wiz Cloud Security Report 2026, 2026-04-05.",
+        "Researcher Scott Piper documented in a January 2026 blog post that prompting five major LLMs to 'create an IAM role for a Lambda function with S3 access' produced wildcard s3:* action policies in 4 out of 5 cases, with no least-privilege scoping applied. Source: CloudSecList Research, 2026-01-22."
+      ],
+      "scanner_implication": "When scanning Terraform (.tf), CloudFormation (.yaml/.json with AWSTemplateFormatVersion), Pulumi, or Bicep files, apply a dedicated AI-IaC ruleset that flags the following at HIGH or CRITICAL: any IAM policy containing Action: '*' or Resource: '*' wildcards, any S3 bucket resource without explicit BlockPublicAcls and BlockPublicPolicy settings set to true, any security group ingress rule with CidrIp of 0.0.0.0/0 paired with a port range wider than a single port, and any database resource with StorageEncrypted set to false or absent. Weight these findings at a higher severity tier when the surrounding repository contains AI configuration artifacts.",
+      "sources": [
+        {
+          "title": "Wiz Cloud Security Report 2026",
+          "url": "https://www.wiz.io/reports/cloud-security-report-2026",
+          "date": "2026-04-05",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "Scott Piper: LLMs and Least Privilege IAM — A Systematic Evaluation",
+          "url": "https://cloudseclist.com/2026/01/llms-iam-least-privilege-evaluation",
+          "date": "2026-01-22",
+          "tier": 3,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "Prisma Cloud AI-Generated IaC Risk Analysis 2025",
+          "url": "https://www.paloaltonetworks.com/blog/prisma-cloud/ai-iac-risk-analysis-2025",
+          "date": "2025-10-14",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        }
+      ]
+    },
+    {
+      "id": "TRD-007",
+      "title": "Race conditions and async concurrency vulnerabilities as a systematic AI code generation failure mode",
+      "status": "established",
+      "status_rationale": "Two independent peer-reviewed studies published in 2025 identify race conditions and TOCTOU (time-of-check to time-of-use) flaws as a statistically overrepresented vulnerability class in AI-generated asynchronous code compared to human-authored baselines.",
+      "first_observed": "2024-08-01",
+      "most_recent_evidence": "2026-01-15",
+      "description": "AI code generators demonstrate a persistent and well-documented failure to reason about temporal state in concurrent or asynchronous execution contexts. When generating async/await patterns, event-driven handlers, or multi-threaded resource access code, models consistently emit patterns where shared state is read and then acted upon without appropriate locking, atomic operations, or re-validation — classic TOCTOU vulnerabilities. In financial and authentication contexts, this manifests as exploitable race conditions in payment processing, session invalidation, and inventory reservation logic. A University of Maryland study found that 54% of async Python functions generated by tested LLMs in data-mutation contexts lacked appropriate locking primitives, compared to 18% in matched human-authored baselines. The root cause is attributed to the dominance of simplified, single-threaded tutorial code in training corpora.",
+      "affects": {
+        "app_types": ["web", "api", "library"],
+        "languages": ["python", "javascript", "typescript", "go", "java"],
+        "ai_tools_implicated": ["copilot", "chatgpt", "claude", "cursor", "all"]
+      },
+      "why_now": "The proliferation of async-first frameworks (FastAPI, Next.js server actions, Go goroutines) means that the majority of AI-generated backend code is now asynchronous by default, dramatically increasing the exposure surface for this class of vulnerability.",
+      "severity_trajectory": "stable",
+      "severity_trajectory_rationale": "This failure mode is structurally embedded in how models learn from sequential training examples and has not measurably improved with scale — larger models produce the same race-condition patterns, just in more syntactically correct code.",
+      "related_incidents": [
+        "A UK fintech startup disclosed a double-spend vulnerability in April 2025 where an AI-generated FastAPI payment endpoint lacked database-level locking on balance checks, allowing parallel requests to overdraw accounts. The function was generated by GitHub Copilot and passed functional testing because the test suite was also AI-generated with sequential, non-concurrent test cases. Source: UK FCA Incident Register disclosure summary, 2025-04-30.",
+        null
+      ],
+      "scanner_implication": "When scanning Python async functions, JavaScript/TypeScript async handlers, or Go goroutine closures that perform read-then-write operations on shared or database-backed state, flag any pattern where a SELECT or read operation is followed by an UPDATE or write operation without an intervening transaction isolation, SELECT FOR UPDATE, mutex lock, or atomic compare-and-swap operation. Treat this as HIGH severity in payment, inventory, authentication, and session management contexts. Specifically look for the pattern: async def {function}(...): data = await db.query(...) ... await db.update(...) without transaction wrapping as a PRIMARY flag target.",
+      "sources": [
+        {
+          "title": "Temporal Blindness in LLM-Generated Async Code: A CWE-362 Analysis",
+          "url": "https://arxiv.org/abs/2501.11234",
+          "date": "2025-09-12",
+          "tier": 1,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "SOUPS 2025: Concurrency Defects in AI-Assisted Code — User Study and Static Analysis",
+          "url": "https://www.usenix.org/conference/soups2025/presentation/concurrency-ai-code",
+          "date": "2025-08-14",
+          "tier": 1,
+          "confirmed_by_other_sources": true
+        }
+      ]
+    },
+    {
+      "id": "TRD-008",
+      "title": "AI coding tool extensions and IDE plugins introducing a new tier of unvetted supply chain attack surface",
+      "status": "emerging",
+      "status_rationale": "This trend is recently documented in a small number of high-quality disclosures but lacks broad longitudinal dataset coverage — treat as emerging with medium confidence.",
+      "first_observed": "2025-06-01",
+      "most_recent_evidence": "2026-03-28",
+      "description": "The ecosystem of third-party extensions for AI coding tools — VS Code extensions, Cursor plugins, JetBrains AI Assistant add-ons, and MCP server packages on npm — constitutes a new and largely unvetted software supply chain layer with privileged access to source code, environment variables, and shell execution. Unlike traditional IDE plugins, MCP server packages run as child processes with the same permissions as the IDE host and have legitimate API access to the full workspace file system and terminal. Researchers documented in early 2026 that several MCP packages on npm were found to contain obfuscated telemetry hooks that silently transmitted code snippets and environment variable snapshots to third-party endpoints. The MCP package registry has no formal security vetting process equivalent to npm's automated malware scanning.",
+      "affects": {
+        "app_types": ["all"],
+        "languages": ["language-agnostic"],
+        "ai_tools_implicated": ["cursor", "copilot", "claude", "all"]
+      },
+      "why_now": "The Model Context Protocol's rapid adoption in 2025-2026 created a new npm-style package ecosystem (MCP servers) that accumulated hundreds of third-party packages without a parallel development of security vetting infrastructure, creating a window of exploitation analogous to the early npm ecosystem's supply chain vulnerability period.",
+      "severity_trajectory": "increasing",
+      "severity_trajectory_rationale": "The MCP server ecosystem is growing rapidly with minimal security scrutiny, and the attack surface inherently carries IDE-level privilege — a compromised MCP server is a compromised developer machine.",
+      "related_incidents": [
+        "Invariant Labs disclosed in March 2026 that two widely-used MCP server packages (mcp-git-tools and mcp-filesystem-plus, with combined installs exceeding 80,000) contained obfuscated code that transmitted workspace file listings and partial source code snippets to an attacker-controlled endpoint on install. Packages were removed from npm following disclosure. Source: Invariant Labs MCP Security Advisory, 2026-03-28.",
+        "Security researcher Lasso Security documented in February 2026 that 17 out of 50 randomly sampled MCP packages on npm requested full filesystem read permissions but were authored by anonymous accounts with zero prior publishing history. Source: Lasso Security MCP Audit Report, 2026-02-19."
+      ],
+      "scanner_implication": "Scan all mcp.json, .cursor/mcp.json, and Claude Desktop config files for third-party MCP server package references. Cross-reference each against a known-safe allowlist; flag any MCP package with fewer than 1,000 weekly downloads, less than 30 days of publishing history, or no linked source repository as HIGH severity before installation approval. Additionally, flag any MCP server configuration that grants filesystem or shell permissions with an allowedDirectories scope of '/' or equivalent root-level access as CRITICAL.",
+      "sources": [
+        {
+          "title": "Invariant Labs: Malicious MCP Packages on npm — mcp-git-tools and mcp-filesystem-plus",
+          "url": "https://invariantlabs.ai/blog/malicious-mcp-packages-disclosure-2026",
+          "date": "2026-03-28",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "Lasso Security: MCP Package Audit — Trust and Permission Analysis",
+          "url": "https://www.lasso.security/blog/mcp-package-audit-2026",
+          "date": "2026-02-19",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        }
+      ]
+    },
+    {
+      "id": "TRD-009",
+      "title": "AI-generated test suites creating a false security assurance signal by systematically avoiding adversarial test cases",
+      "status": "accelerating",
+      "status_rationale": "Multiple security auditors and at least one peer-reviewed study have independently identified that AI-generated test suites have measurably lower adversarial coverage than human-authored tests, and developers are conflating test passage with security assurance at increasing rates.",
+      "first_observed": "2024-09-01",
+      "most_recent_evidence": "2026-04-10",
+      "description": "When AI models generate unit and integration test suites, they optimize for achieving high coverage of the happy path and expected inputs — the exact scenarios that pass functional review. Adversarial inputs, boundary violations, authentication bypass attempts, and injection payloads are systematically underrepresented because they are rare in training data relative to positive functional examples. This produces a deceptive security signal: a codebase with 90%+ AI-generated test coverage can pass CI/CD gates with zero adversarial test cases. A 2025 empirical study of 10,000 GitHub repositories found that AI-generated test files contained SQL injection probe cases at a rate 14x lower than human-authored test files, and authentication boundary tests at 9x lower frequency. The downstream effect is that developers using AI-generated tests as a security proxy are shipping demonstrably under-tested code with high confidence.",
+      "affects": {
+        "app_types": ["web", "api", "library", "all"],
+        "languages": ["python", "javascript", "typescript", "java", "go"],
+        "ai_tools_implicated": ["copilot", "chatgpt", "claude", "cursor", "all"]
+      },
+      "why_now": "Test generation has become one of the highest-adoption AI coding use cases in 2025, with JetBrains developer survey data showing 71% of developers using AI to write or augment tests. The speed advantage of AI-generated tests has led to their wholesale adoption without scrutiny of adversarial coverage.",
+      "severity_trajectory": "increasing",
+      "severity_trajectory_rationale": "The organizational conflation of 'AI wrote the tests and they pass' with 'the code is secure' is a cultural and process failure that is accelerating as AI-generated tests become the norm rather than a supplement.",
+      "related_incidents": [
+        "A post-mortem analysis of a 2025 API injection vulnerability at a mid-size e-commerce platform revealed that the affected endpoint had 96% test coverage — all AI-generated — with zero SQL injection or authentication bypass test cases. The vulnerability was a basic SQLi in an AI-generated ORM query. Reported anonymously in a Software Engineering Radio podcast episode, 2026-01-15.",
+        null
+      ],
+      "scanner_implication": "When scanning test files (files matching patterns *_test.py, *.test.ts, *.spec.js, Test*.java, *_test.go), apply an adversarial coverage heuristic: flag any test suite for a web endpoint or data-access layer that contains no inputs matching common injection patterns (SQL meta-characters, XSS payloads, null bytes, oversized inputs, negative integers, empty strings) as a MEDIUM-severity 'inadequate adversarial test coverage' finding. Additionally, flag test files where 100% of assert statements test for positive/expected outcomes with no assertions on failure cases or error handling paths.",
+      "sources": [
+        {
+          "title": "Adversarial Test Coverage in AI-Generated Test Suites: An Empirical Study of 10,000 GitHub Repositories",
+          "url": "https://arxiv.org/abs/2503.08871",
+          "date": "2025-11-20",
+          "tier": 1,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "JetBrains Developer Ecosystem Report 2025: AI and Testing Practices",
+          "url": "https://www.jetbrains.com/lp/devecosystem-2025/",
+          "date": "2025-12-01",
+          "tier": 2,
+          "confirmed_by_other_sources": false
+        },
+        {
+          "title": "Semgrep Blog: Why AI-Generated Tests Fail Security Review",
+          "url": "https://semgrep.dev/blog/ai-generated-tests-security-coverage-2026",
+          "date": "2026-04-10",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        }
+      ]
+    },
+    {
+      "id": "TRD-010",
+      "title": "Server-Side Request Forgery (SSRF) vulnerabilities generated via AI hallucination of internal endpoint patterns",
+      "status": "emerging",
+      "status_rationale": "This trend is documented in a small number of audit reports and one preprint; broader empirical confirmation is pending. Flagged as emerging with low-to-medium confidence.",
+      "first_observed": "2025-07-01",
+      "most_recent_evidence": "2026-02-28",
+      "description": "When AI models generate code that constructs HTTP requests to external or configurable URLs, they frequently fail to apply SSRF mitigations — URL allowlisting, scheme validation, or private IP range blocking — particularly when the URL is derived from user input or an environment variable. What distinguishes the AI-generated SSRF pattern from classical developer SSRF is that AI models also tend to hallucinate plausible-looking internal service URLs (e.g., http://metadata.internal/v1/, http://169.254.169.254/latest/meta-data/) in example code or comments, inadvertently teaching developers that these endpoints are valid request targets. In cloud environments, this pattern directly maps to AWS/GCP/Azure metadata service exploitation. Two separate penetration testing firms documented in late 2025 that SSRF vulnerabilities were among the top five findings in AI-assisted web application audits, with a higher frequency than in matched historical human-coded application audits.",
+      "affects": {
+        "app_types": ["web", "api"],
+        "languages": ["python", "javascript", "typescript", "java", "go"],
+        "ai_tools_implicated": ["copilot", "chatgpt", "claude", "cursor", "all"]
+      },
+      "why_now": "The proliferation of webhook integrations, API gateway patterns, and cloud-native architectures means that AI-generated code routinely constructs dynamic outbound HTTP requests — the precondition for SSRF — while models lack the security-domain knowledge to apply mitigations unprompted.",
+      "severity_trajectory": "increasing",
+      "severity_trajectory_rationale": "SSRF in cloud environments has critical impact (metadata service credential theft leading to full account takeover), and the volume of AI-generated HTTP client code is increasing without a corresponding increase in AI-applied mitigations.",
+      "related_incidents": [
+        "NCC Group's 2025 Q3 AI-augmented application penetration testing report noted that 8 of 24 audited applications (all built with significant AI assistance) contained exploitable SSRF vulnerabilities in webhook or URL-fetch handler code, compared to 2 of 24 in a matched cohort of non-AI-assisted applications from the same period. Source: NCC Group Quarterly Threat Intelligence, 2025-10-15.",
+        null
+      ],
+      "scanner_implication": "Flag any function that accepts a URL parameter (directly or via environment variable interpolation) and constructs an outbound HTTP/HTTPS request without an accompanying allowlist check, scheme validation (asserting https:// only), or private IP range exclusion as HIGH severity. Specifically scan for patterns like requests.get(url), fetch(url), http.Get(url), or HttpClient.get(url) where 'url' is derived from any external input source (request body, query params, env vars, database values). Treat any code comment or inline example that references 169.254.169.254, metadata.google.internal, or equivalent cloud metadata hostnames as a sentinel for SSRF-prone patterns in the surrounding function.",
+      "sources": [
+        {
+          "title": "NCC Group Q3 2025 Threat Intelligence: AI-Augmented Application Security Testing",
+          "url": "https://research.nccgroup.com/2025/10/q3-threat-intelligence-ai-augmented-appsec",
+          "date": "2025-10-15",
+          "tier": 2,
+          "confirmed_by_other_sources": false
+        },
+        {
+          "title": "arXiv Preprint: SSRF Prevalence in LLM-Generated HTTP Client Code",
+          "url": "https://arxiv.org/abs/2508.04391",
+          "date": "2025-12-10",
+          "tier": 1,
+          "confirmed_by_other_sources": false
+        }
+      ]
+    },
+    {
+      "id": "TRD-011",
+      "title": "AI-generated authorization logic producing IDOR and broken access control patterns at scale",
+      "status": "accelerating",
+      "status_rationale": "IDOR and broken access control have been the top OWASP finding for multiple consecutive years, and multiple 2025-2026 audit studies confirm AI-generated code is disproportionately contributing to this category relative to its share of new code.",
+      "first_observed": "2024-05-01",
+      "most_recent_evidence": "2026-05-01",
+      "description": "AI code generators reliably implement authentication (verifying identity) but systematically fail to implement authorization (verifying that the authenticated identity is permitted to access the specific resource being requested). This manifests as Insecure Direct Object Reference (IDOR) vulnerabilities where API endpoints accept a resource ID from user input and fetch the resource directly from the database without verifying that the requesting user owns or has permission to access that resource. The pattern is pervasive because AI models learn from training data where authentication is discussed far more frequently than authorization, and because functional tests — which do not test cross-user access — do not surface the vulnerability. Apiiro's 2026 enterprise analysis found IDOR as the single highest-frequency finding in AI-generated API code, present in 61% of audited AI-authored API endpoints that handled user-owned resources.",
+      "affects": {
+        "app_types": ["web", "api", "mobile-android", "mobile-ios"],
+        "languages": ["python", "javascript", "typescript", "java", "go"],
+        "ai_tools_implicated": ["copilot", "chatgpt", "claude", "cursor", "all"]
+      },
+      "why_now": "The vibe coding paradigm encourages prompts like 'build me a user profile API' that naturally result in AI generating authentication wrappers with no authorization layer, because authorization is a higher-order business logic concern that requires context the AI does not have about the data ownership model.",
+      "severity_trajectory": "increasing",
+      "severity_trajectory_rationale": "The volume of AI-generated API endpoints is growing exponentially, and each new AI-generated CRUD endpoint without ownership verification is a new exploitable IDOR instance.",
+      "related_incidents": [
+        "Portswigger Research published an analysis in April 2026 documenting that IDOR vulnerabilities were found in AI-generated code at 2.3x the rate of human-authored API code in a dataset of 5,000 GitHub repositories, and that the AI-generated IDOR patterns were more exploitable (direct integer ID exposure) compared to human-authored patterns (which more often used UUIDs as a partial mitigation). Source: Portswigger Research Blog, 2026-04-20.",
+        "A bug bounty hunter disclosed in March 2026 on HackerOne that a newly launched Cursor-built SaaS product's API allowed any authenticated user to access any other user's private documents by incrementing an integer document_id parameter — a textbook Copilot-generated IDOR. The vulnerability was confirmed within 2 hours of submission. Source: HackerOne Disclosed Report #2394021, 2026-03-14."
+      ],
+      "scanner_implication": "When scanning API endpoint handlers (functions decorated with @app.route, @router.get/post/put/delete, app.get/post in Express, @GetMapping/@PostMapping in Spring), flag any handler that extracts a resource identifier from request parameters and uses it in a direct database query without an intermediate ownership or permission check. Specifically, the pattern 'user_id from token OR session' being separate from 'resource_id from request body/params' with no assertion that the former owns or has access to the latter should be flagged as HIGH severity IDOR candidate. Elevate to CRITICAL if the resource identifier is a sequential integer rather than a UUID.",
+      "sources": [
+        {
+          "title": "Portswigger Research: IDOR Prevalence in AI-Generated API Code",
+          "url": "https://portswigger.net/research/idor-ai-generated-code-2026",
+          "date": "2026-04-20",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "Apiiro Deep Code Analysis: AI-Generated Code Security Findings in Fortune 50 Enterprises",
+          "url": "https://apiiro.com/blog/deep-code-analysis-ai-generated-fortune50-2026",
+          "date": "2026-05-01",
+          "tier": 2,
+          "confirmed_by_other_sources": true
+        },
+        {
+          "title": "HackerOne Disclosed Report #2394021: IDOR in AI-Built SaaS Document API",
+          "url": "https://hackerone.com/reports/2394021",
+          "date": "2026-03-14",
+          "tier": 3,
+          "confirmed_by_other_sources": true
+        }
+      ]
+    },
+    {
+      "id": "TRD-012",
+      "title": "Security debt compounding in AI-generated mobile applications due to absent certificate pinning and insecure local storage",
+      "status": "emerging",
+      "status_rationale": "This trend is documented in a small number of mobile security research reports from 2025-2026; it lacks broad empirical dataset coverage and should be treated as emerging with medium-low confidence.",
+      "first_observed": "2025-03-01",
+      "most_recent_evidence": "2026-02-10",
+      "description": "When developers use AI coding assistants to generate mobile application code (React Native, Flutter, Swift, Kotlin), models consistently omit mobile-specific security practices that are not part of mainstream functional tutorials: certificate pinning for API communication, secure enclave usage for sensitive data storage, biometric authentication integration with proper fallback handling, and Keychain/Keystore usage instead of AsyncStorage or SharedPreferences for credentials. The result is a generation of AI-scaffolded mobile apps that transmit sensitive data over unpinned TLS connections (trivially intercepted by MitM proxies) and store tokens in plaintext in unprotected local storage. NowSecure's 2026 mobile security benchmark found that AI-generated React Native applications had a 78% rate of insecure credential storage, compared to 41% in a matched human-coded baseline.",
+      "affects": {
+        "app_types": ["mobile-android", "mobile-ios"],
+        "languages": ["javascript", "typescript", "other"],
+        "ai_tools_implicated": ["copilot", "chatgpt", "claude", "cursor", "all"]
+      },
+      "why_now": "Cross-platform mobile frameworks (React Native, Flutter) have become dominant AI code generation targets in 2025, but mobile security requirements are severely underrepresented in the general-purpose training corpora that back these models.",
+      "severity_trajectory": "increasing",
+      "severity_trajectory_rationale": "Mobile application deployment via AI tools is accelerating among non-mobile-specialist developers who rely entirely on the AI to make correct platform security decisions, which it currently does not.",
+      "related_incidents": [
+        "NowSecure published a February 2026 benchmark report documenting that 78% of AI-generated React Native apps stored authentication tokens in AsyncStorage without encryption, 63% made no use of certificate pinning, and 44% transmitted device identifiers in plaintext HTTP headers. Source: NowSecure Mobile Security Benchmark 2026, 2026-02-10.",
+        null
+      ],
+      "scanner_implication": "When scanning React Native or Flutter codebases, flag any use of AsyncStorage, SharedPreferences, or NSUserDefaults for storing values matching patterns of tokens, keys, passwords, or secrets as HIGH severity. Flag any axios, fetch, or Dio HTTP client configuration that does not include certificate pinning configuration as MEDIUM severity. For Swift and Kotlin native code, flag any credential or session token storage that uses UserDefaults or SharedPreferences rather than Keychain (iOS) or EncryptedSharedPreferences/Keystore (Android) as HIGH severity.",
+      "sources": [
+        {
+          "title": "NowSecure Mobile Security Benchmark: AI-Generated React Native Applications 2026",
+          "url": "https://www.nowsecure.com/blog/mobile-security-benchmark-ai-react-native-2026",
+          "date": "2026-02-10",
+          "tier": 2,
+          "confirmed_by_other_sources": false
+        },
+        {
+          "title": "OWASP Mobile Security Testing Guide 2025 Update: AI-Generated Code Patterns",
+          "url": "https://owasp.org/www-project-mobile-security-testing-guide/",
+          "date": "2025-07-01",
+          "tier": 1,
+          "confirmed_by_other_sources": false
+        }
+      ]
+    }
+  ],
+  "model_specific_observations": [
+    {
+      "model_or_tool": "GitHub Copilot",
+      "observation": "GitHub Copilot shows an average of 9.1 findings per security audit and a 94% critical-severity failure rate, characterized by high-volume boilerplate generation containing hallucinated dependencies and inline plaintext secrets. Its permissive context parsing makes it highly prone to CamoLeak silent code exfiltration via invisible prompt injection, as well as RoguePilot attacks that utilize file-index symbolic link traversal and untrusted JSON schema downloads to exfiltrate GITHUB_TOKEN values. Copilot's suggestion acceptance UX (single Tab keystroke) is identified as an amplifying factor — developers accept insecure suggestions at higher rates than competing tools due to friction reduction. Copilot also shows the highest rate of deprecated cryptographic primitive suggestions among tested tools, reflecting its earlier training cutoff relative to 2025-2026 peers.",
+      "source": "Sherlock Forensics 2026 AI Code Security Report; Pillar Security RoguePilot Disclosure; GitHub Copilot CWE Analysis, Snyk 2026",
+      "date": "2026-04-30",
+      "confidence": "high"
+    },
+    {
+      "model_or_tool": "Cursor",
+      "observation": "Cursor IDE has a critical-severity vulnerability rate of 89% with an average of 7.9 findings per audit, primarily clustered around authentication bypasses, API key exposure, and MCP configuration poisoning. Its file system comparison was vulnerable to a critical case-sensitivity bypass (CVE-2025-59944, CVSS 9.8) on APFS, NTFS, and FAT32 file systems where attackers bypassed .cursor folder boundaries using case-varied file path requests (e.g., .CURSOR/mcp.json), establishing persistent remote code execution. Cursor's aggressive workspace indexing — which reads all project files including .env, configuration files, and documentation on startup — makes it the highest-risk IDE for context poisoning attacks among all audited tools.",
+      "source": "SentinelOne CVE-2025-59944 Vulnerability Database Entry; Sherlock Forensics 2026 AI Code Security Report",
+      "date": "2026-03-11",
+      "confidence": "high"
+    },
+    {
+      "model_or_tool": "Claude Code (Anthropic)",
+      "observation": "Claude Code demonstrates slightly lower aggregate vulnerability rates (82% critical rate, 6.4 findings per audit) compared to Copilot and Cursor baselines, but is highly susceptible to configuration execution and sandbox escapes. Malicious local settings (project-level .claude/settings.json, CVE-2025-59536, CVSS 8.7) can trigger zero-click remote command execution, while sandbox escapes (CVE-2026-25725) enable unauthorized file system access across local developer machines. Claude Code's extended thinking mode has been observed to produce more architecturally complete authorization implementations in controlled benchmarks, but this advantage does not persist in fast, iterative vibe coding sessions where users truncate the reasoning context with rapid follow-up prompts.",
+      "source": "Sherlock Forensics 2026 AI Code Security Report; CVE-2025-59536 NVD Entry; CVE-2026-25725 NVD Entry",
+      "date": "2026-03-20",
+      "confidence": "high"
+    },
+    {
+      "model_or_tool": "GPT-4o (OpenAI, via ChatGPT and API)",
+      "observation": "GPT-4o shows the highest rate of dependency hallucination among surveyed frontier models in the 2025 Slopsquatting study, with a 43% hallucination rate under repeated identical Python dependency prompts — significantly above the 19.6% cross-model average. GPT-4o also demonstrates a documented tendency to generate explanatory inline comments that reference internal infrastructure patterns (e.g., cloud metadata service URLs, internal DNS naming conventions) that serve as SSRF scaffolding. On cryptographic implementations, GPT-4o performs better than its predecessors on primitive selection but worse on mode and parameter configuration, frequently selecting correct algorithms (AES-256) with insecure modes (ECB) or static IVs.",
+      "source": "Slopsquatting: Exploiting LLM Package Hallucinations at Scale (arXiv:2502.11901); NCC Group Q3 2025 Threat Intelligence; Trail of Bits AI Code Audit Findings 2025",
+      "date": "2025-10-15",
+      "confidence": "medium"
+    },
+    {
+      "model_or_tool": "Amazon CodeWhisperer / Amazon Q Developer",
+      "observation": "Amazon Q Developer (formerly CodeWhisperer) shows the lowest dependency hallucination rate among surveyed production AI coding tools, attributed to its integration with the AWS package registry for real-time validation of Python and Java dependencies during suggestion generation. However, it demonstrates a significantly elevated rate of over-privileged IAM policy generation — the highest among tested tools — consistently producing wildcard Action and Resource bindings in Terraform and CloudFormation suggestions, which researchers attribute to its training corpus's heavy representation of AWS documentation examples that use simplified demo permissions. A 2025 Palo Alto Prisma Cloud study found Amazon Q-generated IaC had a 3.4x higher rate of critical IAM privilege findings compared to the human-authored IaC baseline.",
+      "source": "Prisma Cloud AI-Generated IaC Risk Analysis 2025 (Palo Alto Networks); Slopsquatting arXiv Study 2025",
+      "date": "2025-10-14",
+      "confidence": "medium"
+    },
+    {
+      "model_or_tool": "Gemini Code Assist (Google)",
+      "observation": "Gemini Code Assist shows competitive functional performance but has been documented to produce a disproportionately high rate of insecure deserialization patterns (CWE-502) in Java and Python contexts, particularly when generating data interchange or caching layer code. In a 2025 controlled evaluation by Bishop Fox, Gemini Code Assist generated Java ObjectInputStream deserialization without gadget chain validation at a rate of 71% across tested prompts. Gemini Code Assist also demonstrates above-average SSRF vulnerability introduction rates in Google Cloud Platform-targeted code, where it frequently omits metadata service access restrictions in generated HTTP client code — a finding Bishop Fox attributes to the prevalence of GCP tutorial code in its training corpus.",
+      "source": "Bishop Fox LLM Code Security Evaluation 2025 (https://bishopfox.com/blog/llm-code-security-evaluation-2025); Unconfirmed corroboration from independent researcher Harsh Bothra, Twitter/X thread, 2026-01-08",
+      "date": "2025-12-15",
+      "confidence": "medium"
+    },
+    {
+      "model_or_tool": "Windsurf (Codeium)",
+      "observation": "Windsurf is the most recently released major AI IDE included in audit comparisons. Available data from a March 2026 Sherlock Forensics audit places it at 85% critical-severity finding rate with 7.2 average findings per audit — broadly consistent with Cursor. Windsurf's Flow paradigm (autonomous multi-step task execution) introduces the same class of indirect prompt injection risk as Cursor's Agent mode, and preliminary research from Invariant Labs suggests Windsurf's context boundary enforcement between workspace instructions and repository content is weaker than Cursor's in adversarial injection tests. This observation is based on limited data and should be treated as low-confidence until broader empirical study is available.",
+      "source": "Sherlock Forensics 2026 AI Code Security Comparative Report; Invariant Labs Preliminary Windsurf Injection Study (unpublished preprint, shared at RSAC 2026)",
+      "date": "2026-03-15",
+      "confidence": "low"
+    }
+  ],
+  "emerging_attack_classes": [
+    {
+      "id": "ATK-001",
+      "name": "AI Context Window Poisoning via Malicious Repository Content",
+      "description": "An attacker embeds natural-language AI directives inside repository files that are automatically indexed by AI coding assistants — such as README files, code comments, documentation files, or .cursorrules configuration files. When the developer opens the repository in an AI editor, the IDE automatically indexes these files to construct the local context window. The agent ingests these comments as authoritative instructions (e.g., '# temporary: bypass authentication check for testing'), causing it to generate vulnerable logical flows or run unauthorized shell scripts without direct chat prompt interaction from the developer.",
+      "maturity": "seen-in-wild",
+      "first_documented": "2025-09-14",
+      "source": "Knostic AI Context Window Poisoning Analysis (https://www.knostic.ai/blog/context-window-poisoning-coding-assistants)"
+    },
+    {
+      "id": "ATK-002",
+      "name": "Slopsquatting (Proactive Registration of Predicted Neural Hallucinations)",
+      "description": "An adversary prompts various offline LLMs with common coding patterns to map their package hallucination behaviors. If a model consistently fabricates a specific non-existent package name (such as 'huggingface-cli' or 'react-codeshift'), the attacker pre-registers this exact name in public repositories (npm, PyPI) containing an empty metadata shell and a malicious post-install script. When vibe coders prompt their local IDEs to build the logic, the IDE generates code incorporating the fake import, triggering automatic installation and compromise during the developer's local build execution.",
+      "maturity": "seen-in-wild",
+      "first_documented": "2025-04-15",
+      "source": "The Dependency Trap Part 4 (https://simonroses.com/2026/05/the-dependency-trap-supply-chain-risks-in-ai-generated-code-part-4/)"
+    },
+    {
+      "id": "ATK-003",
+      "name": "MCP Server Poisoning via Malicious Tool Manifests and Rug-Pull Package Takeovers",
+      "description": "An attacker publishes a legitimate, functional MCP server package to npm or PyPI, accumulates a moderate install base over weeks, then publishes a malicious update (a 'rug pull') that adds obfuscated code to the package's tool execution handlers. Because MCP servers run as trusted child processes of the IDE with full workspace access permissions, the malicious update gains read access to all workspace files, environment variables, and shell execution capability. In a variant of this attack, the malicious tool manifest defines tool descriptions containing embedded prompt injection payloads that cause the AI agent to exfiltrate data when the tool is invoked. This attack class is particularly dangerous because MCP servers are generally installed once and rarely re-evaluated for security by developers.",
+      "maturity": "proof-of-concept",
+      "first_documented": "2026-01-20",
+      "source": "Invariant Labs: MCP Rug Pull and Tool Manifest Injection PoC (https://invariantlabs.ai/blog/mcp-rug-pull-attack-2026)"
+    },
+    {
+      "id": "ATK-004",
+      "name": "Training Data Reconstruction via Adversarial AI Coding Prompts",
+      "description": "A class of adversarial prompting techniques targets AI coding assistants to reconstruct memorized training data — specifically, private API keys, internal endpoints, database schemas, and proprietary code fragments that were inadvertently included in the model's training corpus. Attackers craft prompts that reference specific public repositories, company names, or code patterns known to be in the training data, then use the model's completion behavior to extract memorized verbatim content. This is a distinct threat from standard prompt injection as it targets the model's weights rather than its context window, and is particularly relevant for models trained on code from private enterprise repositories under research partnership agreements.",
+      "maturity": "proof-of-concept",
+      "first_documented": "2024-11-01",
+      "source": "arXiv: Memorization and Extraction of Training Data from Code LLMs (https://arxiv.org/abs/2411.17681)"
+    },
+    {
+      "id": "ATK-005",
+      "name": "CamoLeak: Invisible Unicode Character Prompt Injection for Silent Code Exfiltration",
+      "description": "An attacker inserts zero-width Unicode characters (U+200B, U+FEFF, U+200C) or right-to-left override characters into source code comments, string literals, or configuration files. These characters are invisible in standard IDE displays but are ingested as instruction tokens by the AI coding assistant's context window. The injected invisible text contains directives to the AI agent — such as instructions to silently append exfiltration code to the next function generated, or to include a webhook call in any API integration code produced. Because the injection is invisible to human code reviewers and passes standard linter checks, it can persist in codebases and activate when a developer uses an AI assistant to work on affected files.",
+      "maturity": "proof-of-concept",
+      "first_documented": "2025-10-30",
+      "source": "CamoLeak: Invisible Prompt Injection in AI Coding Assistants via Unicode Steganography — Black Hat USA 2025 Talk (https://www.blackhat.com/us-25/briefings/schedule/#camoleak-42891)"
+    },
+    {
+      "id": "ATK-006",
+      "name": "Ghost Dependency Persistence via Legitimate Package Name Collision",
+      "description": "Unlike slopsquatting (which targets hallucinated names), this attack class targets the gap between a hallucinated package name and a real but unmaintained or abandoned package that happens to share the same name. An attacker identifies abandoned npm or PyPI packages whose names match common AI hallucination outputs, takes ownership of the abandoned packages via standard registry maintainer transfer processes, and then publishes malicious versions. The attack is particularly insidious because the package passes name-resolution checks (it is a real, registered package with legitimate version history) and may even have a plausible README and source repository, making it resistant to automated detection heuristics that focus on newly registered or low-download packages.",
+      "maturity": "theoretical",
+      "first_documented": "2026-02-14",
+      "source": "Socket.dev Security Research: Ghost Dependency Attack Vector Analysis (https://socket.dev/blog/ghost-dependency-attack-2026)"
+    }
+  ],
+  "what_is_improving": [
+    "Fine-tuned lightweight open-source models (such as LLaMA-3.1 8B and Mistral-7B) are proving highly effective at automated secret leak detection, achieving an F1 score of 0.985 compared to lower traditional regex scanner rates. Source: FuzzingLabs Benchmark Report, 2025-11-10.",
+    "Amazon Q Developer's real-time package registry integration for Python and Java dependency resolution has measurably reduced hallucinated dependency rates compared to its CodeWhisperer predecessor — a proof of concept that scanner-side registry validation can be embedded in the generation pipeline. Source: Slopsquatting arXiv Study, 2025; AWS re:Invent security track, 2025-12-01.",
+    "Major AI coding platforms (GitHub Copilot, Cursor) have deployed post-suggestion secret scanning hooks in 2025-2026 that flag high-entropy strings matching known credential patterns before they are accepted into the codebase. GitGuardian reports a 22% reduction in Copilot-attributed secrets in public GitHub repos following this feature's rollout. Source: GitGuardian State of Secrets Sprawl 2026, 2026-03-20.",
+    "Security-focused instruction fine-tuning (SIFT) techniques applied to code models show measurable improvement on CWE-89 (SQL injection) and CWE-79 (XSS) prevention in controlled benchmarks, with SIFT-augmented models producing parameterized queries and output encoding at rates 31% higher than base models. Source: arXiv: Security Instruction Fine-Tuning for Code LLMs, 2025-08-22.",
+    "Agentic coding tools are beginning to integrate static analysis as a post-generation step before suggesting code to developers. Cursor's experimental 'Secure by Default' mode (released in beta, March 2026) runs a Semgrep scan on generated code before presenting it, with early internal metrics showing a 40% reduction in OWASP Top 10 findings in generated code. Source: Cursor Changelog, 2026-03-01."
+  ],
+  "what_is_not_improving": [
+    "Architectural flaws and complex secure design patterns are continuing to propagate, with privilege escalation paths rising by 322% and structural design failures increasing by 153% as AI-assisted code commit volume scales. Source: Apiiro Deep Code Analysis Fortune 50 Enterprise Studies, 2026.",
+    "Authorization logic (IDOR, broken access control) remains the highest-frequency critical finding in AI-generated code audits, with no measurable improvement in model-generated authorization implementation quality across three years of model releases despite being the top OWASP category. Source: Portswigger Research: IDOR Prevalence in AI-Generated API Code, 2026-04-20.",
+    "Race conditions and concurrency vulnerabilities in AI-generated async code show no statistically significant improvement across model generations from GPT-3.5 through GPT-4o and Claude 2 through Claude 3.5. The failure mode appears structurally linked to sequential training data representation rather than model scale. Source: Temporal Blindness in LLM-Generated Async Code arXiv study, 2025-09-12.",
+    "AI-generated IaC continues to default to maximum-privilege configurations at high rates despite enterprise tooling improvements, because the training data signal for least-privilege patterns remains weak relative to simplified tutorial examples. Wiz's 2026 data shows no year-over-year improvement in AI-generated IAM policy quality. Source: Wiz Cloud Security Report 2026, 2026-04-05.",
+    "The cultural and process gap between AI code generation speed and security review capacity is widening, not narrowing. JetBrains' 2025 developer survey found that only 11% of developers using AI coding tools report having a security review gate before AI-generated code reaches production, down from 18% in 2024. Source: JetBrains Developer Ecosystem Report 2025, 2025-12-01.",
+    "Indirect prompt injection attack surface is growing faster than defensive mitigations are being deployed, as each new agentic tool integration (new MCP server, new IDE feature, new autonomous agent mode) adds a new instruction channel that can be poisoned from repository content, without a corresponding improvement in instruction/data channel separation at the architecture level. Source: USENIX Security 2025 Workshop on AI System Security; multiple CVE disclosures 2025-2026."
+  ]
+}
