@@ -246,11 +246,9 @@ export class AIAnalysisService {
      * Parse a suggested fix from AI response
      */
     private parseSuggestedFix(response: string, original?: string): SecurityFix {
-        // Try to extract JSON from the response
-        const jsonMatch = response.match(/```json\s*([\s\S]*?)\s*```/);
-        if (jsonMatch && jsonMatch[1]) {
+        const tryParse = (text: string): SecurityFix | null => {
             try {
-                const parsed = JSON.parse(jsonMatch[1]);
+                const parsed = JSON.parse(text);
                 const fix: SecurityFix = {
                     description: parsed.description || 'AI-suggested fix',
                     replacement: parsed.replacement || '',
@@ -260,16 +258,34 @@ export class AIAnalysisService {
                     fix.original = original;
                 }
                 return fix;
-            } catch (e) {
-                logger.warn('Failed to parse JSON from AI response, falling back to text extraction');
+            } catch {
+                return null;
             }
+        };
+
+        let parsed: SecurityFix | null = null;
+
+        // 1. Try extracting JSON from a ```json...``` block
+        const jsonMatch = response.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch?.[1]) {
+            parsed = tryParse(jsonMatch[1]);
+            if (parsed) return parsed;
         }
 
-        // Try to extract code blocks as replacement
-        const codeMatch = response.match(/```[\w]*\s*([\s\S]*?)\s*```/);
-        const extractedCode = codeMatch?.[1]?.trim() || '';
+        // 2. Try extracting from any ```...``` block
+        const codeBlockMatch = response.match(/```[\w]*\s*([\s\S]*?)\s*```/);
+        if (codeBlockMatch?.[1]) {
+            parsed = tryParse(codeBlockMatch[1]);
+            if (parsed) return parsed;
+        }
 
-        // Fallback: provide helpful description with any extracted code
+        // 3. Try parsing the full response as raw JSON
+        parsed = tryParse(response.trim());
+        if (parsed) return parsed;
+
+        // 4. Try extracting code blocks as text replacement
+        const extractedCode = codeBlockMatch?.[1]?.trim() || '';
+
         const fallbackFix: SecurityFix = {
             description: extractedCode
                 ? 'AI suggested the following fix (requires manual review)'
@@ -281,7 +297,6 @@ export class AIAnalysisService {
             fallbackFix.original = original;
         }
 
-        // Log the raw response for debugging if we couldn't parse it
         if (!extractedCode) {
             logger.debug('Raw AI response (no structured fix found)', { response: response.slice(0, 500) });
         }
